@@ -485,11 +485,11 @@ export default function CommandCenter() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary selection:text-black overflow-hidden flex flex-col">
+    <div className="h-screen bg-background text-foreground font-sans selection:bg-primary selection:text-black overflow-hidden flex flex-col">
       <div className="scanlines fixed inset-0 z-50 pointer-events-none opacity-10"></div>
       
       {/* HUD Header */}
-      <header className="border-b border-border bg-background/95 backdrop-blur z-40 relative">
+      <header className="border-b border-border bg-background/95 backdrop-blur z-40 relative shrink-0">
         <div className="flex h-16 items-center justify-between px-6">
           <div className="flex items-center gap-6">
             <div className="flex h-10 w-10 items-center justify-center bg-primary text-black font-black text-xl border border-primary shadow-[4px_4px_0_0_rgba(255,255,255,0.1)]" data-testid="img-synthia-mark">
@@ -540,10 +540,10 @@ export default function CommandCenter() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 relative">
+      <main className="flex-1 min-h-0 overflow-hidden relative">
         <ResizablePanelGroup direction="horizontal" className="h-full w-full">
           <ResizablePanel defaultSize={75} minSize={30}>
-            <div className="flex flex-col gap-6 min-h-0 h-full p-6">
+            <div className="flex flex-col gap-6 h-full p-6 overflow-hidden">
               {/* Stats Bar */}
               <div className="grid grid-cols-3 gap-6 shrink-0">
                  <div className="corner-brackets brutal-border p-4 flex flex-col justify-between group h-full" data-testid="card-stats">
@@ -685,8 +685,8 @@ export default function CommandCenter() {
               </div>
 
               {/* Grid View */}
-              <div className="brutal-border bg-black/50 flex-1 relative flex flex-col min-h-0" data-testid="grid-workspace">
-                 <div className="h-8 border-b border-border bg-muted/5 flex items-center px-4 justify-between">
+              <div className="brutal-border bg-black/50 flex-1 relative flex flex-col min-h-0 overflow-hidden" data-testid="grid-workspace">
+                 <div className="h-8 shrink-0 border-b border-border bg-muted/5 flex items-center px-4 justify-between">
                     <span className="font-mono text-[10px] uppercase text-muted-foreground">
                         Main Viewport // {filterMode === 'all' ? 'All Nodes' : filterMode === 'active' ? 'Active Feeds' : 'System Alerts'}
                     </span>
@@ -708,8 +708,8 @@ export default function CommandCenter() {
                     </div>
                  </div>
                  <div className="bg-grid-pattern absolute inset-0 opacity-10 pointer-events-none" />
-                 <div className="relative z-10 p-4 h-full overflow-y-auto">
-                    <div className="grid grid-cols-2 gap-4">
+                 <div className="relative z-10 p-4 flex-1 min-h-0 overflow-y-auto">
+                    <div className="grid grid-cols-2 gap-4 pb-4">
                       {panels
                         .filter(p => {
                             if (filterMode === 'active') return p.status === 'running';
@@ -734,8 +734,8 @@ export default function CommandCenter() {
           {isPlannerVisible && (
             <>
               <ResizableHandle withHandle className="w-1 bg-border hover:bg-primary transition-colors data-[resize-handle-state=hover]:bg-primary data-[resize-handle-state=drag]:bg-primary" />
-              <ResizablePanel defaultSize={25} minSize={20} maxSize={40} className="bg-background">
-                <div className="h-full p-6 pl-0">
+              <ResizablePanel defaultSize={25} minSize={20} maxSize={40} className="bg-background overflow-hidden">
+                <div className="h-full p-6 pl-0 overflow-hidden">
                   <div className="brutal-border bg-card flex flex-col h-full min-h-0 overflow-hidden relative" data-testid="panel-right">
                     {/* Decorative corner lines */}
                     <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-primary pointer-events-none z-20"></div>
