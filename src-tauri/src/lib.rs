@@ -4,6 +4,52 @@ use serde::Serialize;
 use sysinfo::System;
 use thiserror::Error;
 
+#[cfg(target_os = "macos")]
+use std::process::Command;
+
+/// Get actual memory usage on macOS using vm_stat (matches htop)
+#[cfg(target_os = "macos")]
+fn get_macos_memory_usage() -> Option<(f64, f64)> {
+    // Run vm_stat to get memory page statistics
+    let output = Command::new("vm_stat").output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse page size (usually 16384 bytes on Apple Silicon, 4096 on Intel)
+    let page_size: f64 = stdout
+        .lines()
+        .next()?
+        .split("page size of ")
+        .nth(1)?
+        .split(" bytes")
+        .next()?
+        .parse()
+        .ok()?;
+
+    // Helper to extract page count from vm_stat output
+    let get_pages = |name: &str| -> f64 {
+        stdout
+            .lines()
+            .find(|l| l.starts_with(name))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|v| v.trim().trim_end_matches('.').parse().ok())
+            .unwrap_or(0.0)
+    };
+
+    // Get page counts - Active + Wired = "Used" memory (what htop shows)
+    // Note: Excludes compressed memory as htop does
+    let pages_active = get_pages("Pages active");
+    let pages_wired = get_pages("Pages wired down");
+
+    let used_bytes = (pages_active + pages_wired) * page_size;
+
+    // Get total from sysinfo (more reliable than vm_stat)
+    let mut sys = System::new();
+    sys.refresh_memory();
+    let total_bytes = sys.total_memory() as f64;
+
+    Some((used_bytes, total_bytes))
+}
+
 /// System statistics for the Infrastructure widget
 #[derive(Debug, Serialize)]
 pub struct SystemStats {
@@ -68,9 +114,30 @@ fn get_system_stats() -> Result<SystemStats, AppError> {
     let cpu_usage = sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>()
         / sys.cpus().len().max(1) as f32;
 
-    // Calculate memory usage
-    let mem_total = sys.total_memory() as f64;
-    let mem_used = sys.used_memory() as f64;
+    // Calculate memory usage based on platform
+    #[cfg(target_os = "macos")]
+    let (mem_used, mem_total) = {
+        // On macOS, use vm_stat to get actual app memory (Active + Wired)
+        // This matches what htop displays (excludes compressed/cached memory)
+        get_macos_memory_usage().unwrap_or_else(|| {
+            // Fallback to sysinfo if vm_stat fails
+            (sys.used_memory() as f64, sys.total_memory() as f64)
+        })
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let (mem_used, mem_total) = {
+        // On Linux, use available_memory() for accurate "application" memory usage
+        let total = sys.total_memory() as f64;
+        let available = sys.available_memory() as f64;
+        let used = if available > 0.0 {
+            total - available // Excludes cache/buffers
+        } else {
+            sys.used_memory() as f64 // Fallback
+        };
+        (used, total)
+    };
+
     let mem_percent = if mem_total > 0.0 {
         (mem_used / mem_total * 100.0) as f32
     } else {
