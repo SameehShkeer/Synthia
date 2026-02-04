@@ -7,6 +7,16 @@ use thiserror::Error;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Number of bytes in one gibibyte (GiB) - 2^30
+const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+/// Maximum allowed length for user input names
+const MAX_NAME_LENGTH: usize = 100;
+
 /// Get actual memory usage on macOS using vm_stat (matches htop)
 #[cfg(target_os = "macos")]
 fn get_macos_memory_usage() -> Option<(f64, f64)> {
@@ -84,8 +94,10 @@ fn validate_name(name: &str) -> Result<(), AppError> {
     if name.is_empty() {
         return Err(AppError::Validation("Name cannot be empty".into()));
     }
-    if name.len() > 100 {
-        return Err(AppError::Validation("Name must be 100 characters or less".into()));
+    if name.len() > MAX_NAME_LENGTH {
+        return Err(AppError::Validation(
+            format!("Name must be {} characters or less", MAX_NAME_LENGTH),
+        ));
     }
     // Prevent potential injection by checking for control characters
     if name.chars().any(|c| c.is_control()) {
@@ -144,9 +156,9 @@ fn get_system_stats() -> Result<SystemStats, AppError> {
         0.0
     };
 
-    // Convert bytes to GB
-    let mem_total_gb = (mem_total / 1_073_741_824.0) as f32;
-    let mem_used_gb = (mem_used / 1_073_741_824.0) as f32;
+    // Convert bytes to GiB
+    let mem_total_gb = (mem_total / BYTES_PER_GIB) as f32;
+    let mem_used_gb = (mem_used / BYTES_PER_GIB) as f32;
 
     Ok(SystemStats {
         cpu: cpu_usage,
