@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { SYSTEM_STATS_POLL_INTERVAL_MS } from "@/config/constants";
 import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
 import {
@@ -390,7 +391,7 @@ export default function CommandCenter() {
     fetchStats();
 
     // Then poll every 2 seconds
-    const interval = setInterval(fetchStats, 2000);
+    const interval = setInterval(fetchStats, SYSTEM_STATS_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, []);
 
