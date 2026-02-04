@@ -3,7 +3,7 @@
 use log::LevelFilter;
 use serde::Serialize;
 use sysinfo::System;
-use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use thiserror::Error;
 
 #[cfg(target_os = "macos")]
@@ -15,6 +15,10 @@ use std::process::Command;
 
 /// Number of bytes in one gibibyte (GiB) - 2^30
 const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+/// Maximum log file size before rotation (5 MB)
+/// Keeps logs manageable while preserving enough context for debugging
+const MAX_LOG_FILE_SIZE: u128 = 5 * 1024 * 1024;
 
 // =============================================================================
 // Logging Configuration
@@ -249,6 +253,8 @@ pub fn run() {
                 .targets(get_log_targets())
                 .level(LevelFilter::Info)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
+                .max_file_size(MAX_LOG_FILE_SIZE)
+                .rotation_strategy(RotationStrategy::KeepAll)
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![greet, get_system_stats])
