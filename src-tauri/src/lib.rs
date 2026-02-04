@@ -1,5 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+mod logging;
+
 use log::LevelFilter;
 use serde::Serialize;
 use sysinfo::System;
@@ -257,7 +259,13 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepAll)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![greet, get_system_stats])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            get_system_stats,
+            logging::get_logs,
+            logging::clear_logs,
+            logging::get_log_path
+        ])
         .run(tauri::generate_context!())
     {
         log::error!("Application error: {}", e);
