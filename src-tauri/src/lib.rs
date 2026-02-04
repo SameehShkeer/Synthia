@@ -144,15 +144,22 @@ impl serde::Serialize for AppError {
 /// Validates that a name meets application requirements
 fn validate_name(name: &str) -> Result<(), AppError> {
     if name.is_empty() {
+        log::warn!("Validation failed: name cannot be empty");
         return Err(AppError::Validation("Name cannot be empty".into()));
     }
     if name.len() > MAX_NAME_LENGTH {
+        log::warn!(
+            "Validation failed: name exceeds {} characters (got {})",
+            MAX_NAME_LENGTH,
+            name.len()
+        );
         return Err(AppError::Validation(
             format!("Name must be {} characters or less", MAX_NAME_LENGTH),
         ));
     }
     // Prevent potential injection by checking for control characters
     if name.chars().any(|c| c.is_control()) {
+        log::warn!("Validation failed: name contains control characters");
         return Err(AppError::Validation("Name contains invalid characters".into()));
     }
     Ok(())
@@ -161,13 +168,16 @@ fn validate_name(name: &str) -> Result<(), AppError> {
 /// Greets a user by name with input validation
 #[tauri::command]
 fn greet(name: &str) -> Result<String, AppError> {
+    log::debug!("greet() called with name: {:?}", name);
     validate_name(name)?;
+    log::info!("Greeting user: {}", name);
     Ok(format!("Hello, {}! You've been greeted from Rust!", name))
 }
 
 /// Returns real-time system CPU and memory statistics
 #[tauri::command]
 async fn get_system_stats() -> Result<SystemStats, AppError> {
+    log::trace!("get_system_stats() called");
     let mut sys = System::new();
 
     // Refresh CPU and memory info
@@ -184,6 +194,7 @@ async fn get_system_stats() -> Result<SystemStats, AppError> {
         // On macOS, use vm_stat to get actual app memory (Active + Wired)
         // This matches what htop displays (excludes compressed/cached memory)
         get_macos_memory_usage().unwrap_or_else(|| {
+            log::debug!("vm_stat failed, falling back to sysinfo");
             // Fallback to sysinfo if vm_stat fails
             (sys.used_memory() as f64, sys.total_memory() as f64)
         })
@@ -197,6 +208,7 @@ async fn get_system_stats() -> Result<SystemStats, AppError> {
         let used = if available > 0.0 {
             total - available // Excludes cache/buffers
         } else {
+            log::debug!("available_memory unavailable, falling back to used_memory");
             sys.used_memory() as f64 // Fallback
         };
         (used, total)
@@ -211,6 +223,14 @@ async fn get_system_stats() -> Result<SystemStats, AppError> {
     // Convert bytes to GiB
     let mem_total_gb = (mem_total / BYTES_PER_GIB) as f32;
     let mem_used_gb = (mem_used / BYTES_PER_GIB) as f32;
+
+    log::debug!(
+        "System stats: cpu={:.1}%, mem={:.1}% ({:.2}/{:.2} GiB)",
+        cpu_usage,
+        mem_percent,
+        mem_used_gb,
+        mem_total_gb
+    );
 
     Ok(SystemStats {
         cpu: cpu_usage,
