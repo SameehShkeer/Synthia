@@ -1,0 +1,66 @@
+# KAN-20: Security Audit workflow for Rust dependencies
+name: Security Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+
+jobs:
+  audit:
+    name: Rust Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run security audit
+        run: |
+          echo "## 🔒 Security Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Run audit and capture output
+          set +e
+          OUTPUT=$(cargo audit --file src-tauri/Cargo.lock 2>&1)
+          EXIT_CODE=$?
+          set -e
+
+          # Count findings
+          VULNS=$(echo "$OUTPUT" | grep -c "^Crate:" || echo "0")
+          WARNINGS=$(echo "$OUTPUT" | grep -c "Warning:" || echo "0")
+
+          # Determine status
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ **Status: PASSED**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status: FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Crates Scanned | $(grep -o '[0-9]* crate dependencies' <<< "$OUTPUT" | grep -o '[0-9]*' || echo 'N/A') |" >> $GITHUB_STEP_SUMMARY
+          echo "| Advisories Checked | $(grep -o '[0-9]* security advisories' <<< "$OUTPUT" | grep -o '[0-9]*' || echo 'N/A') |" >> $GITHUB_STEP_SUMMARY
+          echo "| Warnings | $WARNINGS |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>📋 Full Output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+          # Print to logs too
+          echo "$OUTPUT"
+
+          # Exit with original code
+          exit $EXIT_CODE
