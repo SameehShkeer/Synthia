@@ -139,7 +139,7 @@ fn greet(name: &str) -> Result<String, AppError> {
 
 /// Returns real-time system CPU and memory statistics
 #[tauri::command]
-fn get_system_stats() -> Result<SystemStats, AppError> {
+async fn get_system_stats() -> Result<SystemStats, AppError> {
     let mut sys = System::new();
 
     // Refresh CPU and memory info
