@@ -16,6 +16,32 @@ use std::process::Command;
 /// Number of bytes in one gibibyte (GiB) - 2^30
 const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+// =============================================================================
+// Logging Configuration
+// =============================================================================
+
+/// Returns log targets for development builds.
+/// Logs to stdout (terminal) and webview (browser DevTools).
+#[cfg(debug_assertions)]
+fn get_log_targets() -> Vec<Target> {
+    vec![
+        Target::new(TargetKind::Stdout),
+        Target::new(TargetKind::Webview),
+    ]
+}
+
+/// Returns log targets for production/release builds.
+/// Logs to stdout and a file in the OS-appropriate log directory.
+#[cfg(not(debug_assertions))]
+fn get_log_targets() -> Vec<Target> {
+    vec![
+        Target::new(TargetKind::Stdout),
+        Target::new(TargetKind::LogDir {
+            file_name: Some("synthia".into()),
+        }),
+    ]
+}
+
 /// Maximum allowed length for user input names
 const MAX_NAME_LENGTH: usize = 100;
 
@@ -200,10 +226,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_log::Builder::new()
-                .targets([
-                    Target::new(TargetKind::Stdout),
-                    Target::new(TargetKind::Webview),
-                ])
+                .targets(get_log_targets())
                 .level(LevelFilter::Info)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
                 .build(),
