@@ -1,7 +1,9 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+use log::LevelFilter;
 use serde::Serialize;
 use sysinfo::System;
+use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use thiserror::Error;
 
 #[cfg(target_os = "macos")]
@@ -196,10 +198,20 @@ async fn get_system_stats() -> Result<SystemStats, AppError> {
 pub fn run() {
     if let Err(e) = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::Webview),
+                ])
+                .level(LevelFilter::Info)
+                .timezone_strategy(TimezoneStrategy::UseLocal)
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![greet, get_system_stats])
         .run(tauri::generate_context!())
     {
-        eprintln!("Application error: {}", e);
+        log::error!("Application error: {}", e);
         std::process::exit(1);
     }
 }
