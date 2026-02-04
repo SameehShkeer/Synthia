@@ -27,12 +27,15 @@ const MAX_LOG_FILE_SIZE: u128 = 5 * 1024 * 1024;
 // =============================================================================
 
 /// Returns log targets for development builds.
-/// Logs to stdout (terminal) and webview (browser DevTools).
+/// Logs to stdout (terminal), webview (browser DevTools), and file (for Logs UI).
 #[cfg(debug_assertions)]
 fn get_log_targets() -> Vec<Target> {
     vec![
         Target::new(TargetKind::Stdout),
         Target::new(TargetKind::Webview),
+        Target::new(TargetKind::LogDir {
+            file_name: Some("synthia".into()),
+        }),
     ]
 }
 
