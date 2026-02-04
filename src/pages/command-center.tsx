@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
 import {
   ChevronDown,
@@ -367,17 +368,29 @@ export default function CommandCenter() {
   const [isPlannerVisible, setIsPlannerVisible] = useState(true);
   const [filterMode, setFilterMode] = useState<'all' | 'active' | 'alerts'>('all');
 
-  // System Stats Simulation
-  const [sysStats, setSysStats] = useState({ cpu: 42, mem: 36, integrity: 98 });
+  // Real System Stats from Tauri backend
+  const [sysStats, setSysStats] = useState({ cpu: 0, mem: 0, memUsedGb: 0, memTotalGb: 0 });
 
-  useMemo(() => {
-    const interval = setInterval(() => {
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const stats = await invoke<{ cpu: number; mem: number; mem_used_gb: number; mem_total_gb: number }>("get_system_stats");
         setSysStats({
-            cpu: Math.floor(Math.random() * (65 - 30) + 30),
-            mem: Math.floor(Math.random() * (50 - 20) + 20),
-            integrity: 98 + Math.random() * 2
+          cpu: Math.round(stats.cpu),
+          mem: Math.round(stats.mem),
+          memUsedGb: stats.mem_used_gb,
+          memTotalGb: stats.mem_total_gb,
         });
-    }, 3000);
+      } catch (err) {
+        console.error("Failed to fetch system stats:", err);
+      }
+    };
+
+    // Fetch immediately on mount
+    fetchStats();
+
+    // Then poll every 2 seconds
+    const interval = setInterval(fetchStats, 2000);
     return () => clearInterval(interval);
   }, []);
 
