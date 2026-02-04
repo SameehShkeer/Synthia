@@ -19,6 +19,7 @@ import {
   Trash2,
   PanelRightClose,
   PanelRightOpen,
+  ScrollText,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -535,6 +536,16 @@ export default function CommandCenter() {
             >
               {isPlannerVisible ? <PanelRightClose className="h-5 w-5" /> : <PanelRightOpen className="h-5 w-5" />}
             </Button>
+            <Link href="/logs" data-testid="link-logs">
+              <Button
+                variant="outline"
+                className="h-9 px-4 rounded-none border-border bg-transparent font-mono text-xs uppercase hover:bg-white hover:text-black hover:border-white transition-all"
+                data-testid="button-open-logs"
+              >
+                <ScrollText className="mr-2 h-3 w-3" />
+                Logs
+              </Button>
+            </Link>
             <Link href="/settings" data-testid="link-settings">
               <Button
                 variant="outline"

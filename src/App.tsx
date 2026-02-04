@@ -7,12 +7,14 @@ import { queryClient } from "./lib/queryClient";
 import NotFound from "@/pages/not-found";
 import CommandCenter from "./pages/command-center";
 import Settings from "./pages/settings";
+import Logs from "./pages/logs";
 
 function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={CommandCenter} />
       <Route path="/settings" component={Settings} />
+      <Route path="/logs" component={Logs} />
       <Route component={NotFound} />
     </Switch>
   );
