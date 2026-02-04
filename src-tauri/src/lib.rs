@@ -1,5 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+mod logging;
+
 use log::LevelFilter;
 use serde::Serialize;
 use sysinfo::System;
@@ -45,9 +47,6 @@ fn get_log_targets() -> Vec<Target> {
         }),
     ]
 }
-
-/// Maximum allowed length for user input names
-const MAX_NAME_LENGTH: usize = 100;
 
 /// Parsed vm_stat output containing page statistics
 #[derive(Debug, PartialEq)]
@@ -145,39 +144,6 @@ impl serde::Serialize for AppError {
     }
 }
 
-/// Validates that a name meets application requirements
-fn validate_name(name: &str) -> Result<(), AppError> {
-    if name.is_empty() {
-        log::warn!("Validation failed: name cannot be empty");
-        return Err(AppError::Validation("Name cannot be empty".into()));
-    }
-    if name.len() > MAX_NAME_LENGTH {
-        log::warn!(
-            "Validation failed: name exceeds {} characters (got {})",
-            MAX_NAME_LENGTH,
-            name.len()
-        );
-        return Err(AppError::Validation(
-            format!("Name must be {} characters or less", MAX_NAME_LENGTH),
-        ));
-    }
-    // Prevent potential injection by checking for control characters
-    if name.chars().any(|c| c.is_control()) {
-        log::warn!("Validation failed: name contains control characters");
-        return Err(AppError::Validation("Name contains invalid characters".into()));
-    }
-    Ok(())
-}
-
-/// Greets a user by name with input validation
-#[tauri::command]
-fn greet(name: &str) -> Result<String, AppError> {
-    log::debug!("greet() called with name: {:?}", name);
-    validate_name(name)?;
-    log::info!("Greeting user: {}", name);
-    Ok(format!("Hello, {}! You've been greeted from Rust!", name))
-}
-
 /// Returns real-time system CPU and memory statistics
 #[tauri::command]
 async fn get_system_stats() -> Result<SystemStats, AppError> {
@@ -257,7 +223,12 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepAll)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![greet, get_system_stats])
+        .invoke_handler(tauri::generate_handler![
+            get_system_stats,
+            logging::get_logs,
+            logging::clear_logs,
+            logging::get_log_path
+        ])
         .run(tauri::generate_context!())
     {
         log::error!("Application error: {}", e);
@@ -436,35 +407,5 @@ Pages wired down:                        50.
         let data = result.unwrap();
         assert_eq!(data.pages_active, 100.0);
         assert_eq!(data.pages_wired, 50.0);
-    }
-
-    // ==========================================================================
-    // Validation Tests
-    // ==========================================================================
-
-    #[test]
-    fn test_validate_name_valid() {
-        assert!(validate_name("Alice").is_ok());
-        assert!(validate_name("Bob123").is_ok());
-        assert!(validate_name("A").is_ok());
-    }
-
-    #[test]
-    fn test_validate_name_empty() {
-        let result = validate_name("");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_name_too_long() {
-        let long_name = "a".repeat(101);
-        let result = validate_name(&long_name);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_name_control_characters() {
-        let result = validate_name("hello\x00world");
-        assert!(result.is_err());
     }
 }
