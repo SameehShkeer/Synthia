@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { SYSTEM_STATS_POLL_INTERVAL_MS } from "@/config/constants";
+import { SystemStats } from "@/types/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
 import {
@@ -375,7 +376,7 @@ export default function CommandCenter() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const stats = await invoke<{ cpu: number; mem: number; mem_used_gb: number; mem_total_gb: number }>("get_system_stats");
+        const stats = await invoke<SystemStats>("get_system_stats");
         setSysStats({
           cpu: Math.round(stats.cpu),
           mem: Math.round(stats.mem),
