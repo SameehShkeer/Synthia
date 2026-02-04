@@ -17,15 +17,22 @@ const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 /// Maximum allowed length for user input names
 const MAX_NAME_LENGTH: usize = 100;
 
-/// Get actual memory usage on macOS using vm_stat (matches htop)
-#[cfg(target_os = "macos")]
-fn get_macos_memory_usage() -> Option<(f64, f64)> {
-    // Run vm_stat to get memory page statistics
-    let output = Command::new("vm_stat").output().ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
+/// Parsed vm_stat output containing page statistics
+#[derive(Debug, PartialEq)]
+pub struct VmStatData {
+    pub page_size: f64,
+    pub pages_active: f64,
+    pub pages_wired: f64,
+}
 
-    // Parse page size (usually 16384 bytes on Apple Silicon, 4096 on Intel)
-    let page_size: f64 = stdout
+/// Parse vm_stat output into structured data.
+///
+/// This is a pure function that can be unit tested without running vm_stat.
+/// Returns None if the output cannot be parsed (missing page size header).
+/// Missing page counts default to 0.0.
+pub fn parse_vm_stat_output(output: &str) -> Option<VmStatData> {
+    // Parse page size from first line (e.g., "Mach Virtual Memory Statistics: (page size of 16384 bytes)")
+    let page_size: f64 = output
         .lines()
         .next()?
         .split("page size of ")
@@ -37,7 +44,7 @@ fn get_macos_memory_usage() -> Option<(f64, f64)> {
 
     // Helper to extract page count from vm_stat output
     let get_pages = |name: &str| -> f64 {
-        stdout
+        output
             .lines()
             .find(|l| l.starts_with(name))
             .and_then(|l| l.split(':').nth(1))
@@ -45,12 +52,29 @@ fn get_macos_memory_usage() -> Option<(f64, f64)> {
             .unwrap_or(0.0)
     };
 
-    // Get page counts - Active + Wired = "Used" memory (what htop shows)
-    // Note: Excludes compressed memory as htop does
-    let pages_active = get_pages("Pages active");
-    let pages_wired = get_pages("Pages wired down");
+    Some(VmStatData {
+        page_size,
+        pages_active: get_pages("Pages active"),
+        pages_wired: get_pages("Pages wired down"),
+    })
+}
 
-    let used_bytes = (pages_active + pages_wired) * page_size;
+/// Calculate used memory in bytes from vm_stat data.
+/// Uses Active + Wired pages (matches htop display).
+pub fn calculate_used_memory(data: &VmStatData) -> f64 {
+    (data.pages_active + data.pages_wired) * data.page_size
+}
+
+/// Get actual memory usage on macOS using vm_stat (matches htop)
+#[cfg(target_os = "macos")]
+fn get_macos_memory_usage() -> Option<(f64, f64)> {
+    // Run vm_stat to get memory page statistics
+    let output = Command::new("vm_stat").output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the output
+    let data = parse_vm_stat_output(&stdout)?;
+    let used_bytes = calculate_used_memory(&data);
 
     // Get total from sysinfo (more reliable than vm_stat)
     let mut sys = System::new();
@@ -177,5 +201,209 @@ pub fn run() {
     {
         eprintln!("Application error: {}", e);
         std::process::exit(1);
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Sample vm_stat output for Apple Silicon (16384 byte pages)
+    const SAMPLE_VM_STAT_APPLE_SILICON: &str = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                4238.
+Pages active:                            220207.
+Pages inactive:                          217715.
+Pages speculative:                         1205.
+Pages throttled:                              0.
+Pages wired down:                        139137.
+Pages purgeable:                              0.
+"Translation faults":                2831385771.
+Pages copy-on-write:                   51228142.
+"#;
+
+    // Sample vm_stat output for Intel Mac (4096 byte pages)
+    const SAMPLE_VM_STAT_INTEL: &str = r#"Mach Virtual Memory Statistics: (page size of 4096 bytes)
+Pages free:                               50000.
+Pages active:                            500000.
+Pages inactive:                          300000.
+Pages speculative:                        10000.
+Pages throttled:                              0.
+Pages wired down:                        200000.
+"#;
+
+    // ==========================================================================
+    // Happy Path Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_parse_vm_stat_apple_silicon() {
+        let result = parse_vm_stat_output(SAMPLE_VM_STAT_APPLE_SILICON);
+        assert!(result.is_some());
+
+        let data = result.unwrap();
+        assert_eq!(data.page_size, 16384.0);
+        assert_eq!(data.pages_active, 220207.0);
+        assert_eq!(data.pages_wired, 139137.0);
+    }
+
+    #[test]
+    fn test_parse_vm_stat_intel() {
+        let result = parse_vm_stat_output(SAMPLE_VM_STAT_INTEL);
+        assert!(result.is_some());
+
+        let data = result.unwrap();
+        assert_eq!(data.page_size, 4096.0);
+        assert_eq!(data.pages_active, 500000.0);
+        assert_eq!(data.pages_wired, 200000.0);
+    }
+
+    #[test]
+    fn test_calculate_used_memory_apple_silicon() {
+        let data = VmStatData {
+            page_size: 16384.0,
+            pages_active: 220207.0,
+            pages_wired: 139137.0,
+        };
+
+        let used = calculate_used_memory(&data);
+        // (220207 + 139137) * 16384 = 359344 * 16384 = 5,887,492,096 bytes
+        assert_eq!(used, 5_887_492_096.0);
+    }
+
+    #[test]
+    fn test_calculate_used_memory_intel() {
+        let data = VmStatData {
+            page_size: 4096.0,
+            pages_active: 500000.0,
+            pages_wired: 200000.0,
+        };
+
+        let used = calculate_used_memory(&data);
+        // (500000 + 200000) * 4096 = 700000 * 4096 = 2,867,200,000 bytes
+        assert_eq!(used, 2_867_200_000.0);
+    }
+
+    // ==========================================================================
+    // Edge Case Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_parse_vm_stat_empty_input() {
+        let result = parse_vm_stat_output("");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_vm_stat_missing_page_size() {
+        let input = r#"Some random output
+Pages active: 100.
+Pages wired down: 50.
+"#;
+        let result = parse_vm_stat_output(input);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_vm_stat_malformed_page_size() {
+        let input = r#"Mach Virtual Memory Statistics: (page size of INVALID bytes)
+Pages active:                            100.
+Pages wired down:                         50.
+"#;
+        let result = parse_vm_stat_output(input);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_vm_stat_missing_active_pages() {
+        let input = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                              4238.
+Pages wired down:                        139137.
+"#;
+        let result = parse_vm_stat_output(input);
+        assert!(result.is_some());
+
+        let data = result.unwrap();
+        assert_eq!(data.page_size, 16384.0);
+        assert_eq!(data.pages_active, 0.0); // Defaults to 0
+        assert_eq!(data.pages_wired, 139137.0);
+    }
+
+    #[test]
+    fn test_parse_vm_stat_missing_wired_pages() {
+        let input = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                              4238.
+Pages active:                            220207.
+"#;
+        let result = parse_vm_stat_output(input);
+        assert!(result.is_some());
+
+        let data = result.unwrap();
+        assert_eq!(data.page_size, 16384.0);
+        assert_eq!(data.pages_active, 220207.0);
+        assert_eq!(data.pages_wired, 0.0); // Defaults to 0
+    }
+
+    #[test]
+    fn test_parse_vm_stat_non_numeric_page_counts() {
+        let input = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages active:                            INVALID.
+Pages wired down:                        ALSO_INVALID.
+"#;
+        let result = parse_vm_stat_output(input);
+        assert!(result.is_some());
+
+        let data = result.unwrap();
+        assert_eq!(data.page_size, 16384.0);
+        assert_eq!(data.pages_active, 0.0); // Defaults to 0 on parse failure
+        assert_eq!(data.pages_wired, 0.0);  // Defaults to 0 on parse failure
+    }
+
+    #[test]
+    fn test_parse_vm_stat_whitespace_handling() {
+        // Test that various whitespace patterns are handled correctly
+        let input = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages active:     100.
+Pages wired down:                        50.
+"#;
+        let result = parse_vm_stat_output(input);
+        assert!(result.is_some());
+
+        let data = result.unwrap();
+        assert_eq!(data.pages_active, 100.0);
+        assert_eq!(data.pages_wired, 50.0);
+    }
+
+    // ==========================================================================
+    // Validation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_validate_name_valid() {
+        assert!(validate_name("Alice").is_ok());
+        assert!(validate_name("Bob123").is_ok());
+        assert!(validate_name("A").is_ok());
+    }
+
+    #[test]
+    fn test_validate_name_empty() {
+        let result = validate_name("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_name_too_long() {
+        let long_name = "a".repeat(101);
+        let result = validate_name(&long_name);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_name_control_characters() {
+        let result = validate_name("hello\x00world");
+        assert!(result.is_err());
     }
 }
