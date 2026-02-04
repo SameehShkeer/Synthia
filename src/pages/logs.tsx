@@ -1,8 +1,9 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ScrollText, ArrowLeft, Search, Download, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ScrollText, ArrowLeft, Search, Download, Trash2, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -15,64 +16,12 @@ type LogEntry = {
   meta?: Record<string, string>;
 };
 
-const MOCK_LOGS: LogEntry[] = [
-  {
-    id: "L-001",
-    ts: "00:00:03",
-    level: "INFO",
-    source: "planner",
-    message: "Plan ingest complete. 3 work items staged.",
-    meta: { run: "R-1182", trace: "a3f9" },
-  },
-  {
-    id: "L-002",
-    ts: "00:00:08",
-    level: "DEBUG",
-    source: "dispatch",
-    message: "Assigned WI-002 → term-claude-1",
-    meta: { workItem: "WI-002", node: "term-claude-1" },
-  },
-  {
-    id: "L-003",
-    ts: "00:00:12",
-    level: "INFO",
-    source: "node.term-claude-1",
-    message: "Build pipeline warm-start. Restoring cache.",
-    meta: { cache: "hit", branch: "main" },
-  },
-  {
-    id: "L-004",
-    ts: "00:00:18",
-    level: "WARN",
-    source: "infra",
-    message: "Memory pressure rising (82%).",
-    meta: { mem: "82%", host: "compute-7" },
-  },
-  {
-    id: "L-005",
-    ts: "00:00:23",
-    level: "ERROR",
-    source: "stream.gateway",
-    message: "HLS segment timeout. Retrying...",
-    meta: { stream: "IDE_STREAM_BACKEND", retry: "1/3" },
-  },
-  {
-    id: "L-006",
-    ts: "00:00:29",
-    level: "INFO",
-    source: "dispatch",
-    message: "Work item WI-003 queued for IDE_STREAM_FRONTEND",
-    meta: { workItem: "WI-003", node: "stream-ide-1" },
-  },
-  {
-    id: "L-007",
-    ts: "00:00:35",
-    level: "DEBUG",
-    source: "signals",
-    message: "Signal filter set to ACTIVE",
-    meta: { filter: "ACTIVE" },
-  },
-];
+// Response type from Tauri backend
+type LogResult = {
+  success: boolean;
+  count: number;
+  logs: LogEntry[];
+};
 
 function LevelPill({ level }: { level: LogLevel }) {
   const styles =
@@ -110,7 +59,33 @@ export default function Logs() {
   const [level, setLevel] = useState<"ALL" | LogLevel>("ALL");
   const [source, setSource] = useState("ALL");
   const [dense, setDense] = useState(true);
-  const [logs, setLogs] = useState<LogEntry[]>(MOCK_LOGS);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load logs from backend on mount
+  async function loadLogs() {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await invoke<LogResult>("get_logs", { limit: 1000 });
+      // Map backend log levels to frontend types (handle case variations)
+      const mappedLogs = result.logs.map((log) => ({
+        ...log,
+        level: log.level.toUpperCase() as LogLevel,
+      }));
+      setLogs(mappedLogs);
+    } catch (err) {
+      console.error("Failed to load logs:", err);
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadLogs();
+  }, []);
 
   const sources = useMemo(() => {
     const s = new Set(logs.map((l) => l.source));
@@ -135,8 +110,14 @@ export default function Logs() {
     });
   }, [logs, query, level, source]);
 
-  function clearLogs() {
-    setLogs([]);
+  async function clearLogs() {
+    try {
+      await invoke("clear_logs");
+      setLogs([]);
+    } catch (err) {
+      console.error("Failed to clear logs:", err);
+      setError(String(err));
+    }
   }
 
   function downloadLogs() {
@@ -202,6 +183,17 @@ export default function Logs() {
             >
               {dense ? "Dense" : "Comfort"}
             </button>
+
+            <Button
+              variant="outline"
+              className="h-9 px-4 rounded-none border-border bg-transparent font-mono text-xs uppercase hover:bg-white hover:text-black hover:border-white transition-all"
+              onClick={loadLogs}
+              disabled={loading}
+              data-testid="button-refresh-logs"
+            >
+              <RefreshCw className={`mr-2 h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
 
             <Button
               variant="outline"
@@ -303,14 +295,44 @@ export default function Logs() {
             </div>
 
             <div className="h-[calc(100vh-260px)] overflow-auto">
-              {filtered.length === 0 ? (
+              {loading ? (
+                <div className="grid place-items-center h-full p-10">
+                  <div className="text-center">
+                    <RefreshCw className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
+                    <div className="font-display font-black text-2xl uppercase tracking-tight" data-testid="text-loading-title">
+                      Loading logs
+                    </div>
+                    <div className="mt-2 font-mono text-xs text-muted-foreground">
+                      Fetching from backend...
+                    </div>
+                  </div>
+                </div>
+              ) : error ? (
+                <div className="grid place-items-center h-full p-10">
+                  <div className="text-center">
+                    <div className="font-display font-black text-2xl uppercase tracking-tight text-destructive" data-testid="text-error-title">
+                      Error loading logs
+                    </div>
+                    <div className="mt-2 font-mono text-xs text-muted-foreground" data-testid="text-error-message">
+                      {error}
+                    </div>
+                    <Button
+                      variant="outline"
+                      className="mt-4 h-9 px-4 rounded-none"
+                      onClick={loadLogs}
+                    >
+                      Try Again
+                    </Button>
+                  </div>
+                </div>
+              ) : filtered.length === 0 ? (
                 <div className="grid place-items-center h-full p-10">
                   <div className="text-center">
                     <div className="font-display font-black text-2xl uppercase tracking-tight" data-testid="text-empty-title">
                       No logs
                     </div>
                     <div className="mt-2 font-mono text-xs text-muted-foreground" data-testid="text-empty-subtitle">
-                      Try changing filters or run a dispatch to generate activity.
+                      Try changing filters or run the app to generate activity.
                     </div>
                   </div>
                 </div>
