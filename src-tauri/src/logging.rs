@@ -5,10 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use tauri::Manager;
+use tokio::fs::OpenOptions;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 // =============================================================================
 // Types
@@ -80,7 +80,6 @@ fn parse_bracketed_format(line: &str, index: usize) -> Option<LogEntry> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut in_bracket = false;
-    let mut remainder = String::new();
     let mut bracket_count = 0;
 
     for ch in line.chars() {
@@ -100,9 +99,6 @@ fn parse_bracketed_format(line: &str, index: usize) -> Option<LogEntry> {
             }
             _ if in_bracket => {
                 current.push(ch);
-            }
-            _ if !in_bracket && bracket_count >= 4 => {
-                remainder.push(ch);
             }
             _ => {}
         }
@@ -216,22 +212,26 @@ pub async fn get_logs(
         });
     }
 
-    // Read and parse log file
-    let file = File::open(&log_path)
+    // Read and parse log file using async I/O
+    let file = tokio::fs::File::open(&log_path)
+        .await
         .map_err(|e| format!("Failed to open log file: {}", e))?;
 
     let reader = BufReader::new(file);
     let limit = limit.unwrap_or(1000);
     let offset = offset.unwrap_or(0);
 
-    // Parse all lines
-    let mut entries: Vec<LogEntry> = reader
-        .lines()
-        .enumerate()
-        .filter_map(|(idx, line)| {
-            line.ok().and_then(|l| parse_log_line(&l, idx))
-        })
-        .collect();
+    // Parse all lines using async reader
+    let mut lines = reader.lines();
+    let mut entries: Vec<LogEntry> = Vec::new();
+    let mut idx = 0;
+
+    while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
+        if let Some(entry) = parse_log_line(&line, idx) {
+            entries.push(entry);
+        }
+        idx += 1;
+    }
 
     let total = entries.len();
 
@@ -268,17 +268,21 @@ pub async fn clear_logs(app: tauri::AppHandle) -> Result<bool, String> {
         return Ok(true);
     }
 
-    // Truncate the file
+    // Truncate the file using async I/O
     let mut file = OpenOptions::new()
         .write(true)
         .truncate(true)
         .open(&log_path)
+        .await
         .map_err(|e| format!("Failed to clear log file: {}", e))?;
 
     // Write a marker so we know the file was cleared
-    writeln!(file, "[{}][{}][INFO][synthia] Log file cleared",
+    let marker = format!("[{}][{}][INFO][synthia] Log file cleared\n",
         chrono::Local::now().format("%Y-%m-%d"),
-        chrono::Local::now().format("%H:%M:%S"))
+        chrono::Local::now().format("%H:%M:%S"));
+
+    file.write_all(marker.as_bytes())
+        .await
         .map_err(|e| format!("Failed to write clear marker: {}", e))?;
 
     log::info!("Log file cleared successfully");
