@@ -239,7 +239,57 @@ pub fn resize_terminal(
     Ok(())
 }
 
-/// Kill a terminal session and clean up resources.
+/// Kill a single PTY session and its entire process tree.
+///
+/// Uses POSIX process group signaling (SIGHUP → SIGKILL escalation)
+/// to ensure all child processes (e.g. `claude`, `npm`) are terminated,
+/// not just the direct shell. This matches the Alacritty/WezTerm pattern.
+fn kill_session(session_id: &str, session: &mut PtySession) {
+    if let Some(pid) = session.child.process_id() {
+        let pid = pid as i32;
+
+        // 1. Send SIGHUP to entire process group (graceful shutdown).
+        //    Since portable-pty calls setsid(), child PID == PGID.
+        #[cfg(unix)]
+        unsafe {
+            log::debug!("Sending SIGHUP to process group {} for session {}", pid, session_id);
+            libc::killpg(pid, libc::SIGHUP);
+        }
+
+        // 2. Brief grace period for processes to clean up
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // 3. Force-kill entire process group (catches stragglers)
+        #[cfg(unix)]
+        unsafe {
+            log::debug!("Sending SIGKILL to process group {} for session {}", pid, session_id);
+            libc::killpg(pid, libc::SIGKILL);
+        }
+
+        // Fallback for non-unix (Windows)
+        #[cfg(not(unix))]
+        {
+            if let Err(e) = session.child.kill() {
+                log::warn!("Failed to kill child for session {}: {}", session_id, e);
+            }
+        }
+    } else {
+        // No PID available — fall back to portable-pty's kill
+        if let Err(e) = session.child.kill() {
+            log::warn!("Failed to kill child for session {}: {}", session_id, e);
+        }
+    }
+
+    // 4. Reap zombie process
+    if let Err(e) = session.child.wait() {
+        log::warn!("Failed to wait on child for session {}: {}", session_id, e);
+    }
+
+    log::info!("Killed terminal session: {}", session_id);
+    // Dropping session releases master PTY, writer, etc.
+}
+
+/// Kill a terminal session and clean up all child processes.
 #[tauri::command]
 pub fn kill_terminal(
     state: State<'_, PtyState>,
@@ -254,20 +304,34 @@ pub fn kill_terminal(
         .remove(&session_id)
         .ok_or_else(|| format!("Session not found: {}", session_id))?;
 
-    // Kill the child process
-    if let Err(e) = session.child.kill() {
-        log::warn!("Failed to kill child process for session {}: {}", session_id, e);
-    }
+    kill_session(&session_id, &mut session);
 
-    // Wait for child to actually exit to prevent zombies
-    if let Err(e) = session.child.wait() {
-        log::warn!("Failed to wait on child for session {}: {}", session_id, e);
-    }
-
-    log::info!("Killed terminal session: {}", session_id);
-
-    // Dropping session releases master PTY, writer, etc.
     Ok(())
+}
+
+/// Kill all active PTY sessions. Called on app exit to prevent leaked processes.
+pub fn kill_all_sessions(state: &PtyState) {
+    let mut sessions = match state.sessions.lock() {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to lock sessions for cleanup: {}", e);
+            return;
+        }
+    };
+
+    let count = sessions.len();
+    if count == 0 {
+        return;
+    }
+
+    let ids: Vec<String> = sessions.keys().cloned().collect();
+    for id in &ids {
+        if let Some(mut session) = sessions.remove(id) {
+            kill_session(id, &mut session);
+        }
+    }
+
+    log::info!("App exit: killed {} PTY session(s)", count);
 }
 
 /// List all active terminal sessions.
