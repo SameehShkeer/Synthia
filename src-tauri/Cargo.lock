@@ -3749,6 +3749,7 @@ name = "synthia"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libc",
  "log",
  "portable-pty",
  "serde",

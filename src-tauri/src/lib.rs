@@ -6,6 +6,7 @@ mod pty;
 use log::LevelFilter;
 use serde::Serialize;
 use sysinfo::System;
+use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use thiserror::Error;
 
@@ -216,7 +217,7 @@ async fn get_system_stats() -> Result<SystemStats, AppError> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Err(e) = tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -241,11 +242,18 @@ pub fn run() {
             pty::inject_command,
             pty::inject_commands
         ])
-        .run(tauri::generate_context!())
-    {
-        log::error!("Application error: {}", e);
-        std::process::exit(1);
-    }
+        .build(tauri::generate_context!())
+        .expect("Failed to build Tauri application");
+
+    // Use App::run() (not Builder::run()) to hook into RunEvent::Exit.
+    // Tauri calls std::process::exit() which skips Drop — so we must
+    // explicitly kill all PTY sessions here to prevent leaked processes.
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            let state = app_handle.state::<pty::PtyState>();
+            pty::kill_all_sessions(state.inner());
+        }
+    });
 }
 
 // =============================================================================
