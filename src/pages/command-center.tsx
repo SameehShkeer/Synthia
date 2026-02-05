@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { SYSTEM_STATS_POLL_INTERVAL_MS } from "@/config/constants";
 import { SystemStats } from "@/types/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
+import { TerminalNode } from "@/components/terminal-node";
 import {
   ChevronDown,
   Expand,
@@ -216,25 +217,34 @@ function PanelCard({
 
       <div className="p-2 relative z-10">
         <div
-          className="relative aspect-video w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors"
+          className={`relative w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors ${panel.kind === "terminal" ? "h-[240px]" : "aspect-video"}`}
           data-testid={`viewport-${panel.id}`}
         >
-          {/* Scanline overlay for viewport */}
-          <div className="pointer-events-none absolute inset-0 opacity-10 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9IjAuMDUiLz4KPC9zdmc+')]"></div>
-          
-          <div className="absolute inset-0 grid place-items-center">
-            <div className="text-center">
-              <div className="font-mono text-xs uppercase text-muted-foreground tracking-widest mb-2 flex items-center justify-center gap-2">
-                {panel.kind === "stream" ? <Wifi className="h-3 w-3 animate-pulse" /> : <TerminalSquare className="h-3 w-3" />}
-                {panel.kind === "stream" ? "NO_SIGNAL" : "AWAITING_INPUT"}
-              </div>
-              <div className="font-mono text-[10px] text-primary/50 border border-primary/20 px-2 py-1 inline-block" data-testid={`text-endpoint-${panel.id}`}>
-                {panel.endpoint || (panel.kind === 'terminal' ? "~/" : "::1")}
-              </div>
-            </div>
-          </div>
+          {panel.kind === "terminal" ? (
+            <TerminalNode
+              sessionId={`terminal-${panel.id}`}
+              className="absolute inset-0"
+            />
+          ) : (
+            <>
+              {/* Scanline overlay for viewport */}
+              <div className="pointer-events-none absolute inset-0 opacity-10 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9IjAuMDUiLz4KPC9zdmc+')]"></div>
 
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-black/90 p-1 border-t border-border">
+              <div className="absolute inset-0 grid place-items-center">
+                <div className="text-center">
+                  <div className="font-mono text-xs uppercase text-muted-foreground tracking-widest mb-2 flex items-center justify-center gap-2">
+                    <Wifi className="h-3 w-3 animate-pulse" />
+                    NO_SIGNAL
+                  </div>
+                  <div className="font-mono text-[10px] text-primary/50 border border-primary/20 px-2 py-1 inline-block" data-testid={`text-endpoint-${panel.id}`}>
+                    {panel.endpoint || "::1"}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-black/90 p-1 border-t border-border z-10">
             <div className="flex items-center gap-2 min-w-0">
               <div
                 className="font-mono text-[9px] text-primary/80 uppercase tracking-widest pl-1"
@@ -496,9 +506,15 @@ export default function CommandCenter() {
     setNewPanelEndpoint("");
   }
 
-  function handleRemovePanel(id: string) {
+  const handleRemovePanel = useCallback((id: string) => {
+    const panel = panels.find(p => p.id === id);
+    if (panel?.kind === "terminal") {
+      invoke("kill_terminal", { sessionId: `terminal-${id}` }).catch((err) =>
+        console.error("kill_terminal on remove failed:", err),
+      );
+    }
     setPanels(prev => prev.filter(p => p.id !== id));
-  }
+  }, [panels]);
 
   return (
     <div className="h-screen bg-background text-foreground font-sans selection:bg-primary selection:text-black overflow-hidden flex flex-col">
@@ -875,29 +891,37 @@ export default function CommandCenter() {
            </DialogHeader>
            
            <div className="flex-1 bg-black relative overflow-hidden" data-testid="viewport-focus">
-              <div className="absolute inset-0 opacity-10" 
-                   style={{ background: "linear-gradient(90deg, transparent 50%, rgba(204, 255, 0, 0.1) 50%), linear-gradient(0deg, transparent 50%, rgba(204, 255, 0, 0.1) 50%)", backgroundSize: "40px 40px" }} 
-              />
-              <div className="scanlines absolute inset-0 opacity-20 pointer-events-none"></div>
-              
-              <div className="absolute inset-0 flex items-center justify-center">
-                 <div className="text-center group">
-                   <div className="text-8xl font-black text-white/5 font-display mb-6 tracking-tighter group-hover:text-primary/10 transition-colors">
-                     {activePanel?.kind === 'terminal' ? 'TERM' : 'LIVE'}
-                   </div>
-                   <div className="font-mono text-sm text-primary animate-pulse tracking-[0.5em] border border-primary/30 px-4 py-2 bg-black/50 backdrop-blur">
-                     ESTABLISHING_LINK...
-                   </div>
-                 </div>
-              </div>
-              
-              {/* HUD Overlay Elements */}
-              <div className="absolute top-4 left-4 font-mono text-[10px] text-primary/50">
-                CAM_01 // RAW
-              </div>
-              <div className="absolute bottom-4 right-4 font-mono text-[10px] text-primary/50">
-                LAT: 0ms // JIT: 0ms
-              </div>
+              {activePanel?.kind === "terminal" ? (
+                <TerminalNode
+                  sessionId={`terminal-${activePanel.id}`}
+                  className="absolute inset-0"
+                />
+              ) : (
+                <>
+                  <div className="absolute inset-0 opacity-10"
+                       style={{ background: "linear-gradient(90deg, transparent 50%, rgba(204, 255, 0, 0.1) 50%), linear-gradient(0deg, transparent 50%, rgba(204, 255, 0, 0.1) 50%)", backgroundSize: "40px 40px" }}
+                  />
+                  <div className="scanlines absolute inset-0 opacity-20 pointer-events-none"></div>
+
+                  <div className="absolute inset-0 flex items-center justify-center">
+                     <div className="text-center group">
+                       <div className="text-8xl font-black text-white/5 font-display mb-6 tracking-tighter group-hover:text-primary/10 transition-colors">
+                         LIVE
+                       </div>
+                       <div className="font-mono text-sm text-primary animate-pulse tracking-[0.5em] border border-primary/30 px-4 py-2 bg-black/50 backdrop-blur">
+                         ESTABLISHING_LINK...
+                       </div>
+                     </div>
+                  </div>
+
+                  <div className="absolute top-4 left-4 font-mono text-[10px] text-primary/50">
+                    CAM_01 // RAW
+                  </div>
+                  <div className="absolute bottom-4 right-4 font-mono text-[10px] text-primary/50">
+                    LAT: 0ms // JIT: 0ms
+                  </div>
+                </>
+              )}
            </div>
            
            <div className="h-14 border-t border-primary/30 bg-muted/10 flex items-center justify-between px-6">
