@@ -217,13 +217,13 @@ function PanelCard({
 
       <div className="p-2 relative z-10">
         <div
-          className={`relative w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors ${panel.kind === "terminal" ? "h-[240px]" : "aspect-video"}`}
+          className={`relative w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors flex flex-col ${panel.kind === "terminal" ? "h-[240px]" : "aspect-video"}`}
           data-testid={`viewport-${panel.id}`}
         >
           {panel.kind === "terminal" ? (
             <TerminalNode
               sessionId={`terminal-${panel.id}`}
-              className="absolute inset-0"
+              className="flex-1 min-h-0"
             />
           ) : (
             <>
@@ -244,7 +244,7 @@ function PanelCard({
             </>
           )}
 
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-black/90 p-1 border-t border-border z-10">
+          <div className="flex items-center justify-between bg-black/90 p-1 border-t border-border shrink-0">
             <div className="flex items-center gap-2 min-w-0">
               <div
                 className="font-mono text-[9px] text-primary/80 uppercase tracking-widest pl-1"
@@ -890,7 +890,7 @@ export default function CommandCenter() {
              </div>
            </DialogHeader>
            
-           <div className="flex-1 bg-black relative overflow-hidden" data-testid="viewport-focus">
+           <div className="flex-1 min-h-0 bg-black relative overflow-hidden" data-testid="viewport-focus">
               {activePanel?.kind === "terminal" ? (
                 <TerminalNode
                   sessionId={`terminal-${activePanel.id}`}
