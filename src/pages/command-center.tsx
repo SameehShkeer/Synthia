@@ -57,9 +57,9 @@ type WorkspacePanel = {
   id: string;
   kind: PanelKind;
   title: string;
-  subtitle?: string;
   status?: "idle" | "running" | "attention";
-  endpoint?: string;
+  /** Working directory for terminal panels, stream URL for stream panels */
+  cwd?: string;
   activeWorkItemId?: string;
 };
 
@@ -84,33 +84,29 @@ const MOCK_PANELS: WorkspacePanel[] = [
     id: "term-claude-1",
     kind: "terminal",
     title: "CLAUDE_TERM_BUILD",
-    subtitle: "ssh synthia@10.0.0.21",
     status: "running",
-    endpoint: "/home/synthia/build",
+    // Empty cwd defaults to $HOME on the backend
   },
   {
     id: "term-claude-2",
     kind: "terminal",
     title: "CLAUDE_TERM_TESTS",
-    subtitle: "ssh synthia@10.0.0.22",
     status: "idle",
-    endpoint: "/home/synthia/tests",
+    // Empty cwd defaults to $HOME on the backend
   },
   {
     id: "stream-ide-1",
     kind: "stream",
     title: "IDE_STREAM_FRONTEND",
-    subtitle: "HLS/RTSP gateway",
     status: "running",
-    endpoint: "http://10.0.0.30:8080/live/frontend.m3u8",
+    cwd: "http://localhost:8080/live/frontend.m3u8",
   },
   {
     id: "stream-ide-2",
     kind: "stream",
     title: "IDE_STREAM_BACKEND",
-    subtitle: "WebRTC/HLS",
     status: "attention",
-    endpoint: "http://10.0.0.31:8080/live/backend.m3u8",
+    cwd: "http://localhost:8080/live/backend.m3u8",
   },
 ];
 
@@ -235,6 +231,7 @@ function PanelCard({
                 sessionId={`terminal-${panel.id}`}
                 className="flex-1 min-h-0"
                 killOnCleanup={false}
+                cwd={panel.cwd}
               />
             )
           ) : (
@@ -249,7 +246,7 @@ function PanelCard({
                     NO_SIGNAL
                   </div>
                   <div className="font-mono text-[10px] text-primary/50 border border-primary/20 px-2 py-1 inline-block" data-testid={`text-endpoint-${panel.id}`}>
-                    {panel.endpoint || "::1"}
+                    {panel.cwd || "::1"}
                   </div>
                 </div>
               </div>
@@ -388,7 +385,7 @@ export default function CommandCenter() {
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
   const [newPanelKind, setNewPanelKind] = useState<PanelKind>("terminal");
   const [newPanelTitle, setNewPanelTitle] = useState("");
-  const [newPanelEndpoint, setNewPanelEndpoint] = useState("");
+  const [newPanelCwd, setNewPanelCwd] = useState("");
 
   const [isPlannerVisible, setIsPlannerVisible] = useState(true);
   const [filterMode, setFilterMode] = useState<'all' | 'active' | 'alerts'>('all');
@@ -502,20 +499,19 @@ export default function CommandCenter() {
 
   function handleAddPanel() {
     if (!newPanelTitle) return;
-    
+
     const newPanel: WorkspacePanel = {
         id: `${newPanelKind}-${Date.now()}`,
         kind: newPanelKind,
         title: newPanelTitle,
-        subtitle: "Manual Entry",
         status: "idle",
-        endpoint: newPanelEndpoint || "N/A"
+        cwd: newPanelCwd || undefined
     };
 
     setPanels(prev => [...prev, newPanel]);
     setIsAddPanelOpen(false);
     setNewPanelTitle("");
-    setNewPanelEndpoint("");
+    setNewPanelCwd("");
   }
 
   const handleRemovePanel = useCallback((id: string) => {
@@ -910,6 +906,7 @@ export default function CommandCenter() {
                 <TerminalNode
                   sessionId={`terminal-${activePanel.id}`}
                   killOnCleanup={false}
+                  cwd={activePanel.cwd}
                 />
               ) : (
                 <>
@@ -941,7 +938,7 @@ export default function CommandCenter() {
            
            <div className="h-14 shrink-0 border-t border-primary/30 bg-muted/10 flex items-center justify-between px-6">
               <div className="font-mono text-[10px] text-muted-foreground uppercase">
-                TARGET: {activePanel?.endpoint}
+                TARGET: {activePanel?.cwd}
               </div>
               <Button 
                 className="rounded-none bg-primary text-black hover:bg-white font-mono text-xs font-bold px-8 h-9"
@@ -989,9 +986,9 @@ export default function CommandCenter() {
 
                <div className="space-y-2">
                   <label className="text-[10px] font-mono uppercase text-muted-foreground">{newPanelKind === 'terminal' ? 'Working Directory' : 'Stream URL'}</label>
-                  <Input 
-                    value={newPanelEndpoint}
-                    onChange={(e) => setNewPanelEndpoint(e.target.value)}
+                  <Input
+                    value={newPanelCwd}
+                    onChange={(e) => setNewPanelCwd(e.target.value)}
                     placeholder={newPanelKind === 'terminal' ? "/home/user/project" : "http://192.168.1.100:8080/feed"}
                     className="rounded-none border-border bg-black text-xs font-mono focus:border-primary focus:ring-0"
                   />

@@ -59,12 +59,17 @@ pub struct TerminalOutput {
 /// Creates a PTY, spawns the user's default shell, and starts streaming
 /// output to the frontend via `pty-output-{session_id}` events.
 ///
+/// # Arguments
+/// * `session_id` - Optional session ID (generated if not provided)
+/// * `cwd` - Optional working directory for the shell (defaults to $HOME)
+///
 /// Returns the session ID (generated if not provided).
 #[tauri::command]
 pub async fn spawn_terminal(
     app: tauri::AppHandle,
     state: State<'_, PtyState>,
     session_id: Option<String>,
+    cwd: Option<String>,
 ) -> Result<String, String> {
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -100,7 +105,24 @@ pub async fn spawn_terminal(
 
     let mut cmd = CommandBuilder::new(&shell);
     cmd.env("TERM", "xterm-256color");
-    if let Ok(home) = std::env::var("HOME") {
+
+    // Use provided cwd, or fall back to $HOME
+    if let Some(ref dir) = cwd {
+        // Validate cwd exists and is a directory (prevents path traversal attacks)
+        let path = std::path::Path::new(dir);
+        if !path.exists() {
+            return Err(format!("Working directory does not exist: {}", dir));
+        }
+        if !path.is_dir() {
+            return Err(format!("Working directory is not a directory: {}", dir));
+        }
+        // Canonicalize to resolve symlinks and normalize path
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve working directory: {}", e))?;
+        cmd.cwd(&canonical);
+        log::info!("Using cwd for session {}: {:?}", session_id, canonical);
+    } else if let Ok(home) = std::env::var("HOME") {
         cmd.cwd(&home);
     }
 
