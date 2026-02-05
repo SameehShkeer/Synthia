@@ -244,26 +244,32 @@ pub fn resize_terminal(
 /// Uses POSIX process group signaling (SIGHUP → SIGKILL escalation)
 /// to ensure all child processes (e.g. `claude`, `npm`) are terminated,
 /// not just the direct shell. This matches the Alacritty/WezTerm pattern.
+///
+/// Safe implementation via the `nix` crate — no `unsafe` blocks required.
 fn kill_session(session_id: &str, session: &mut PtySession) {
-    if let Some(pid) = session.child.process_id() {
-        let pid = pid as i32;
-
-        // 1. Send SIGHUP to entire process group (graceful shutdown).
-        //    Since portable-pty calls setsid(), child PID == PGID.
+    if let Some(raw_pid) = session.child.process_id() {
         #[cfg(unix)]
-        unsafe {
-            log::debug!("Sending SIGHUP to process group {} for session {}", pid, session_id);
-            libc::killpg(pid, libc::SIGHUP);
-        }
+        {
+            use nix::sys::signal::{killpg, Signal};
+            use nix::unistd::Pid;
 
-        // 2. Brief grace period for processes to clean up
-        std::thread::sleep(std::time::Duration::from_millis(100));
+            let pid = Pid::from_raw(raw_pid as i32);
 
-        // 3. Force-kill entire process group (catches stragglers)
-        #[cfg(unix)]
-        unsafe {
-            log::debug!("Sending SIGKILL to process group {} for session {}", pid, session_id);
-            libc::killpg(pid, libc::SIGKILL);
+            // 1. Send SIGHUP to entire process group (graceful shutdown).
+            //    Since portable-pty calls setsid(), child PID == PGID.
+            log::debug!("Sending SIGHUP to process group {} for session {}", raw_pid, session_id);
+            if let Err(e) = killpg(pid, Signal::SIGHUP) {
+                log::warn!("killpg(SIGHUP) failed for session {}: {}", session_id, e);
+            }
+
+            // 2. Brief grace period for processes to clean up
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // 3. Force-kill entire process group (catches stragglers)
+            log::debug!("Sending SIGKILL to process group {} for session {}", raw_pid, session_id);
+            if let Err(e) = killpg(pid, Signal::SIGKILL) {
+                log::warn!("killpg(SIGKILL) failed for session {}: {}", session_id, e);
+            }
         }
 
         // Fallback for non-unix (Windows)
