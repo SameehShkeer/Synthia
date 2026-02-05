@@ -21,6 +21,8 @@ interface TerminalNodeProps {
   readOnly?: boolean;
   /** Additional CSS classes */
   className?: string;
+  /** If false, don't kill PTY on unmount (for shared sessions like Focus Dialog). Default: true */
+  killOnCleanup?: boolean;
 }
 
 // =============================================================================
@@ -45,8 +47,9 @@ export function TerminalNode({
   sessionId,
   readOnly: initialReadOnly = false,
   className,
+  killOnCleanup,
 }: TerminalNodeProps) {
-  const { termRef, status, write, resize } = useTerminalSession({ sessionId });
+  const { termRef, status, write, resize } = useTerminalSession({ sessionId, killOnCleanup });
   const [mode, setMode] = useState<TerminalMode>(
     initialReadOnly ? "agent" : "interactive",
   );

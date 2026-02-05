@@ -68,6 +68,20 @@ pub async fn spawn_terminal(
 ) -> Result<String, String> {
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+    // Idempotent: if session already exists, return it without spawning a new one.
+    // This prevents session resets when multiple UI components share the same session
+    // (e.g. panel card + focus dialog).
+    {
+        let sessions = state
+            .sessions
+            .lock()
+            .map_err(|e| format!("Failed to lock sessions: {}", e))?;
+        if sessions.contains_key(&session_id) {
+            log::info!("Session {} already exists, reusing", session_id);
+            return Ok(session_id);
+        }
+    }
+
     log::info!("Spawning terminal session: {}", session_id);
 
     let pty_system = native_pty_system();

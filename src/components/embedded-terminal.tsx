@@ -72,6 +72,32 @@ const SYNTHIA_THEME: ITheme = {
 };
 
 // =============================================================================
+// Terminal Registry
+// =============================================================================
+// Preserves xterm.js Terminal instances across React mount/unmount cycles.
+// When a component unmounts, the Terminal stays alive in the registry so a
+// future mount can reparent its DOM — preserving full scrollback history.
+
+interface TerminalRegistryEntry {
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  /** Wrapper div that contains xterm's DOM tree. Reparented between containers. */
+  wrapperEl: HTMLDivElement;
+}
+
+const terminalRegistry = new Map<string, TerminalRegistryEntry>();
+
+/** Dispose a terminal instance and remove it from the registry. */
+export function disposeTerminalInstance(sessionId: string): void {
+  const entry = terminalRegistry.get(sessionId);
+  if (entry) {
+    entry.terminal.dispose();
+    entry.wrapperEl.remove();
+    terminalRegistry.delete(sessionId);
+  }
+}
+
+// =============================================================================
 // Component
 // =============================================================================
 
@@ -102,57 +128,85 @@ export const EmbeddedTerminal = forwardRef(function EmbeddedTerminal(
     const container = containerRef.current;
     if (!container) return;
 
-    // ---- Create terminal instance ----
-    const terminal = new Terminal({
-      cursorBlink: true,
-      cursorStyle: "block",
-      fontFamily: "'Space Mono', 'Fira Code', 'Cascadia Code', monospace",
-      fontSize: 13,
-      lineHeight: 1.4,
-      theme: theme ?? SYNTHIA_THEME,
-      allowProposedApi: true,
-      disableStdin: readOnly,
-    });
+    let entry = terminalRegistry.get(sessionId);
 
-    terminalRef.current = terminal;
+    if (entry) {
+      // ---- Reuse existing terminal ----
+      // Reparent its DOM wrapper into this container (preserves scrollback)
+      container.appendChild(entry.wrapperEl);
 
-    // ---- Load addons ----
-    const fitAddon = new FitAddon();
-    fitAddonRef.current = fitAddon;
-    terminal.loadAddon(fitAddon);
+      // Re-attach WebGL addon (context is lost when DOM moves between parents)
+      try {
+        const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => webglAddon.dispose());
+        entry.terminal.loadAddon(webglAddon);
+      } catch {
+        // WebGL not available — DOM renderer fallback
+      }
 
-    // Clickable URLs
-    terminal.loadAddon(new WebLinksAddon());
-
-    // ---- Mount to DOM ----
-    terminal.open(container);
-
-    // Initial fit
-    fitAddon.fit();
-
-    // ---- WebGL rendering (GPU-accelerated, with DOM fallback) ----
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
+      // Re-fit for the new container dimensions and notify the PTY backend
+      requestAnimationFrame(() => {
+        entry!.fitAddon.fit();
+        if (onResize && entry!.terminal.cols && entry!.terminal.rows) {
+          onResize(entry!.terminal.cols, entry!.terminal.rows);
+        }
       });
-      terminal.loadAddon(webglAddon);
-    } catch {
-      // WebGL not available — DOM renderer is the default fallback
+    } else {
+      // ---- Create new terminal instance ----
+      const wrapperEl = document.createElement("div");
+      wrapperEl.style.width = "100%";
+      wrapperEl.style.height = "100%";
+      container.appendChild(wrapperEl);
+
+      const terminal = new Terminal({
+        cursorBlink: true,
+        cursorStyle: "block",
+        fontFamily: "'Space Mono', 'Fira Code', 'Cascadia Code', monospace",
+        fontSize: 13,
+        lineHeight: 1.4,
+        theme: theme ?? SYNTHIA_THEME,
+        allowProposedApi: true,
+        disableStdin: readOnly,
+      });
+
+      const fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.loadAddon(new WebLinksAddon());
+      terminal.open(wrapperEl);
+      fitAddon.fit();
+
+      // GPU-accelerated rendering with DOM fallback
+      try {
+        const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => webglAddon.dispose());
+        terminal.loadAddon(webglAddon);
+      } catch {
+        // WebGL not available — DOM renderer is the default fallback
+      }
+
+      entry = { terminal, fitAddon, wrapperEl };
+      terminalRegistry.set(sessionId, entry);
+
+      // Notify PTY of initial dimensions
+      if (onResize && terminal.cols && terminal.rows) {
+        onResize(terminal.cols, terminal.rows);
+      }
     }
 
-    // ---- Wire up callbacks ----
-    const dataDisposable = terminal.onData((data) => {
+    terminalRef.current = entry.terminal;
+    fitAddonRef.current = entry.fitAddon;
+
+    // ---- Wire up callbacks (local to this mount) ----
+    const dataDisposable = entry.terminal.onData((data) => {
       onData?.(data);
     });
 
-    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+    const resizeDisposable = entry.terminal.onResize(({ cols, rows }) => {
       onResize?.(cols, rows);
     });
 
     // ---- Auto-resize via ResizeObserver ----
     const resizeObserver = new ResizeObserver(() => {
-      // requestAnimationFrame avoids layout thrashing
       requestAnimationFrame(() => {
         fitAddonRef.current?.fit();
       });
@@ -164,7 +218,13 @@ export const EmbeddedTerminal = forwardRef(function EmbeddedTerminal(
       resizeObserver.disconnect();
       dataDisposable.dispose();
       resizeDisposable.dispose();
-      terminal.dispose();
+
+      // Detach the wrapper from this container but DON'T dispose the terminal.
+      // The Terminal instance stays alive in the registry for future mounts.
+      if (entry && container.contains(entry.wrapperEl)) {
+        container.removeChild(entry.wrapperEl);
+      }
+
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
