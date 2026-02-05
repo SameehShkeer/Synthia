@@ -36,10 +36,18 @@ impl Default for PtyState {
 }
 
 /// Information about a terminal session returned to the frontend.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct TerminalInfo {
     pub session_id: String,
     pub is_alive: bool,
+}
+
+/// Structured output event for AI agent consumption.
+#[derive(Debug, Serialize, Clone)]
+pub struct TerminalOutput {
+    pub session_id: String,
+    pub data: String,
+    pub timestamp: String,
 }
 
 // =============================================================================
@@ -132,10 +140,20 @@ pub async fn spawn_terminal(
                 }
                 Ok(n) => {
                     let data = String::from_utf8_lossy(&buf[..n]).to_string();
+                    // Raw output for xterm.js rendering
                     if app.emit(&event_name, &data).is_err() {
                         log::warn!("Failed to emit PTY output for session: {}", sid);
                         break;
                     }
+                    // Structured output for AI agent consumption
+                    let _ = app.emit(
+                        "terminal-output-captured",
+                        TerminalOutput {
+                            session_id: sid.clone(),
+                            data: data.clone(),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        },
+                    );
                 }
                 Err(e) => {
                     log::error!("PTY read error for session {}: {}", sid, e);
@@ -271,4 +289,111 @@ pub fn list_terminals(
         .collect();
 
     Ok(terminals)
+}
+
+// =============================================================================
+// AI Agent Commands
+// =============================================================================
+
+/// Inject a single command into a terminal session.
+///
+/// Appends a newline to execute the command. The command appears in the
+/// terminal as if the user typed it.
+#[tauri::command]
+pub fn inject_command(
+    state: State<'_, PtyState>,
+    session_id: String,
+    command: String,
+) -> Result<(), String> {
+    log::info!(
+        "Injecting command into session {}: {}",
+        session_id,
+        command.chars().take(80).collect::<String>()
+    );
+
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|e| format!("Failed to lock sessions: {}", e))?;
+
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+
+    let mut writer = session
+        .writer
+        .lock()
+        .map_err(|e| format!("Failed to lock writer: {}", e))?;
+
+    // Write command followed by newline to execute
+    writer
+        .write_all(command.as_bytes())
+        .map_err(|e| format!("Failed to write command: {}", e))?;
+    writer
+        .write_all(b"\n")
+        .map_err(|e| format!("Failed to write newline: {}", e))?;
+    writer
+        .flush()
+        .map_err(|e| format!("Failed to flush: {}", e))?;
+
+    Ok(())
+}
+
+/// Inject multiple commands sequentially into a terminal session.
+///
+/// Each command is sent with a newline. A short delay between commands
+/// allows the shell to process each one.
+#[tauri::command]
+pub async fn inject_commands(
+    state: State<'_, PtyState>,
+    session_id: String,
+    commands: Vec<String>,
+) -> Result<(), String> {
+    log::info!(
+        "Injecting {} commands into session {}",
+        commands.len(),
+        session_id
+    );
+
+    for (i, command) in commands.iter().enumerate() {
+        log::debug!(
+            "Injecting command {}/{}: {}",
+            i + 1,
+            commands.len(),
+            command.chars().take(80).collect::<String>()
+        );
+
+        {
+            let sessions = state
+                .sessions
+                .lock()
+                .map_err(|e| format!("Failed to lock sessions: {}", e))?;
+
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session not found: {}", session_id))?;
+
+            let mut writer = session
+                .writer
+                .lock()
+                .map_err(|e| format!("Failed to lock writer: {}", e))?;
+
+            writer
+                .write_all(command.as_bytes())
+                .map_err(|e| format!("Failed to write command: {}", e))?;
+            writer
+                .write_all(b"\n")
+                .map_err(|e| format!("Failed to write newline: {}", e))?;
+            writer
+                .flush()
+                .map_err(|e| format!("Failed to flush: {}", e))?;
+        }
+
+        // Brief delay between commands to let the shell process each one
+        if i < commands.len() - 1 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    Ok(())
 }

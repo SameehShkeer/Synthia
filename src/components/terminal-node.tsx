@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   EmbeddedTerminal,
   type EmbeddedTerminalHandle,
@@ -11,9 +12,13 @@ import {
 // Types
 // =============================================================================
 
+export type TerminalMode = "interactive" | "agent";
+
 interface TerminalNodeProps {
   /** Stable session ID tied to this node (e.g. "terminal-term-claude-1") */
   sessionId: string;
+  /** Start in read-only agent mode */
+  readOnly?: boolean;
   /** Additional CSS classes */
   className?: string;
 }
@@ -36,8 +41,17 @@ function StatusDot({ status }: { status: TerminalStatus }) {
 // Component
 // =============================================================================
 
-export function TerminalNode({ sessionId, className }: TerminalNodeProps) {
+export function TerminalNode({
+  sessionId,
+  readOnly: initialReadOnly = false,
+  className,
+}: TerminalNodeProps) {
   const { termRef, status, write, resize } = useTerminalSession({ sessionId });
+  const [mode, setMode] = useState<TerminalMode>(
+    initialReadOnly ? "agent" : "interactive",
+  );
+
+  const isReadOnly = mode === "agent" || status === "exited";
 
   return (
     <div className={`flex flex-col h-full w-full ${className ?? ""}`}>
@@ -51,6 +65,23 @@ export function TerminalNode({ sessionId, className }: TerminalNodeProps) {
               ? "INITIALIZING"
               : "SESSION_ENDED"}
         </span>
+
+        {/* Mode toggle */}
+        {status === "running" && (
+          <button
+            onClick={() =>
+              setMode((m) => (m === "interactive" ? "agent" : "interactive"))
+            }
+            className={`ml-2 font-mono text-[9px] uppercase tracking-widest border px-1.5 py-0.5 transition-colors ${
+              mode === "agent"
+                ? "border-accent/50 text-accent bg-accent/10"
+                : "border-primary/30 text-primary/60 bg-primary/5 hover:border-primary/60"
+            }`}
+          >
+            {mode === "agent" ? "AGENT_MODE" : "INTERACTIVE"}
+          </button>
+        )}
+
         <span className="font-mono text-[9px] text-primary/40 ml-auto">
           {sessionId}
         </span>
@@ -61,9 +92,9 @@ export function TerminalNode({ sessionId, className }: TerminalNodeProps) {
         <EmbeddedTerminal
           ref={termRef as React.Ref<EmbeddedTerminalHandle>}
           sessionId={sessionId}
-          onData={write}
+          onData={isReadOnly ? undefined : write}
           onResize={resize}
-          readOnly={status === "exited"}
+          readOnly={isReadOnly}
         />
       </div>
     </div>
