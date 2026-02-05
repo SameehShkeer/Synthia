@@ -19,3 +19,12 @@ export interface SystemStats {
   /** Total memory in GiB */
   mem_total_gb: number;
 }
+
+/**
+ * Terminal session info returned by list_terminals command.
+ * Must match TerminalInfo struct in src-tauri/src/pty.rs
+ */
+export interface TerminalInfo {
+  session_id: string;
+  is_alive: boolean;
+}
