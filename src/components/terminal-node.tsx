@@ -23,6 +23,8 @@ interface TerminalNodeProps {
   className?: string;
   /** If false, don't kill PTY on unmount (for shared sessions like Focus Dialog). Default: true */
   killOnCleanup?: boolean;
+  /** Working directory for the terminal shell. Defaults to $HOME if not specified. */
+  cwd?: string;
 }
 
 // =============================================================================
@@ -48,8 +50,9 @@ export function TerminalNode({
   readOnly: initialReadOnly = false,
   className,
   killOnCleanup,
+  cwd,
 }: TerminalNodeProps) {
-  const { termRef, status, write, resize } = useTerminalSession({ sessionId, killOnCleanup });
+  const { termRef, status, write, resize } = useTerminalSession({ sessionId, killOnCleanup, cwd });
   const [mode, setMode] = useState<TerminalMode>(
     initialReadOnly ? "agent" : "interactive",
   );

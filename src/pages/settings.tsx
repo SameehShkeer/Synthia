@@ -28,8 +28,8 @@ type StreamSource = {
 type TerminalTarget = {
   id: string;
   name: string;
-  host: string;
-  port: string;
+  /** Working directory for the terminal shell */
+  cwd: string;
   notes?: string;
   enabled: boolean;
 };
@@ -48,19 +48,19 @@ const seedStreams: StreamSource[] = [
     id: "stream-1",
     name: "IDE_STREAM_FRONTEND",
     protocol: "HLS",
-    ip: "10.0.0.30",
+    ip: "localhost",
     port: "8080",
     path: "/live/frontend.m3u8",
-    enabled: true,
+    enabled: false, // Disabled by default until configured
   },
   {
     id: "stream-2",
     name: "IDE_STREAM_BACKEND",
     protocol: "HLS",
-    ip: "10.0.0.31",
-    port: "8080",
+    ip: "localhost",
+    port: "8081",
     path: "/live/backend.m3u8",
-    enabled: true,
+    enabled: false, // Disabled by default until configured
   },
 ];
 
@@ -68,16 +68,15 @@ const seedTerminals: TerminalTarget[] = [
   {
     id: "term-1",
     name: "CLAUDE_TERM_BUILD",
-    host: "10.0.0.21",
-    port: "7681",
-    notes: "websocket bridge",
+    cwd: "", // Empty defaults to $HOME
+    notes: "Main development terminal",
     enabled: true,
   },
   {
     id: "term-2",
     name: "CLAUDE_TERM_TESTS",
-    host: "10.0.0.22",
-    port: "7681",
+    cwd: "", // Empty defaults to $HOME
+    notes: "Test runner terminal",
     enabled: true,
   },
 ];
@@ -409,8 +408,8 @@ export default function Settings() {
                         <div className="font-mono text-sm font-bold uppercase text-primary" data-testid={`text-terminal-name-${t.id}`}>
                           {t.name}
                         </div>
-                        <div className="mt-1 font-mono text-xs text-muted-foreground" data-testid={`text-terminal-host-${t.id}`}>
-                          {`${t.host}:${t.port}`}
+                        <div className="mt-1 font-mono text-xs text-muted-foreground" data-testid={`text-terminal-cwd-${t.id}`}>
+                          {t.cwd}
                         </div>
                       </div>
 
@@ -441,8 +440,8 @@ export default function Settings() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                      <div className="md:col-span-2">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
                         <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Identifier</div>
                         <Input
                           value={t.name}
@@ -459,38 +458,23 @@ export default function Settings() {
                       </div>
 
                       <div>
-                        <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Host IP</div>
+                        <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Working Directory</div>
                         <Input
-                          value={t.host}
+                          value={t.cwd}
                           onChange={(e) =>
                             setTerminals((prev) =>
                               prev.map((x) =>
-                                x.id === t.id ? { ...x, host: e.target.value } : x,
+                                x.id === t.id ? { ...x, cwd: e.target.value } : x,
                               ),
                             )
                           }
+                          placeholder="/path/to/project"
                           className="rounded-none border-border bg-black font-mono text-xs focus:border-primary"
-                          data-testid={`input-terminal-host-${t.id}`}
+                          data-testid={`input-terminal-cwd-${t.id}`}
                         />
                       </div>
 
-                      <div>
-                        <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Port</div>
-                        <Input
-                          value={t.port}
-                          onChange={(e) =>
-                            setTerminals((prev) =>
-                              prev.map((x) =>
-                                x.id === t.id ? { ...x, port: e.target.value } : x,
-                              ),
-                            )
-                          }
-                          className="rounded-none border-border bg-black font-mono text-xs focus:border-primary"
-                          data-testid={`input-terminal-port-${t.id}`}
-                        />
-                      </div>
-
-                      <div className="md:col-span-4">
+                      <div className="md:col-span-2">
                         <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">System Notes</div>
                         <Input
                           value={t.notes ?? ""}
@@ -520,8 +504,7 @@ export default function Settings() {
                       {
                         id: `term-${Date.now()}`,
                         name: `TERMINAL_${prev.length + 1}`,
-                        host: "",
-                        port: "",
+                        cwd: "",
                         enabled: true,
                       },
                     ])

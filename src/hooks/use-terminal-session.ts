@@ -9,6 +9,8 @@ interface UseTerminalSessionOptions {
   sessionId: string;
   /** If false, don't kill the PTY session on unmount (for shared sessions). Default: true */
   killOnCleanup?: boolean;
+  /** Working directory for the terminal shell. Defaults to $HOME if not specified. */
+  cwd?: string;
 }
 
 /**
@@ -19,7 +21,7 @@ interface UseTerminalSessionOptions {
  * - Provides resize() for dimension changes
  * - Kills PTY on unmount
  */
-export function useTerminalSession({ sessionId, killOnCleanup = true }: UseTerminalSessionOptions) {
+export function useTerminalSession({ sessionId, killOnCleanup = true, cwd }: UseTerminalSessionOptions) {
   const termRef = useRef<EmbeddedTerminalHandle | null>(null);
   const [status, setStatus] = useState<TerminalStatus>("connecting");
 
@@ -74,7 +76,7 @@ export function useTerminalSession({ sessionId, killOnCleanup = true }: UseTermi
 
       // 2. Spawn the PTY session
       try {
-        await invoke<string>("spawn_terminal", { sessionId });
+        await invoke<string>("spawn_terminal", { sessionId, cwd });
         if (!cancelled) setStatus("running");
       } catch (err) {
         console.error("spawn_terminal failed:", err);
@@ -95,7 +97,7 @@ export function useTerminalSession({ sessionId, killOnCleanup = true }: UseTermi
         );
       }
     };
-  }, [sessionId, killOnCleanup]);
+  }, [sessionId, killOnCleanup, cwd]);
 
   return { termRef, status, write, resize };
 }
