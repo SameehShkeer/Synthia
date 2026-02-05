@@ -237,7 +237,9 @@ pub fn run() {
             pty::write_terminal,
             pty::resize_terminal,
             pty::kill_terminal,
-            pty::list_terminals
+            pty::list_terminals,
+            pty::inject_command,
+            pty::inject_commands
         ])
         .run(tauri::generate_context!())
     {

@@ -28,3 +28,14 @@ export interface TerminalInfo {
   session_id: string;
   is_alive: boolean;
 }
+
+/**
+ * Structured terminal output event for AI agent consumption.
+ * Emitted on the "terminal-output-captured" event channel.
+ * Must match TerminalOutput struct in src-tauri/src/pty.rs
+ */
+export interface TerminalOutput {
+  session_id: string;
+  data: string;
+  timestamp: string;
+}
