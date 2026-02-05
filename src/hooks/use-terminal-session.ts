@@ -7,6 +7,8 @@ export type TerminalStatus = "connecting" | "running" | "exited";
 
 interface UseTerminalSessionOptions {
   sessionId: string;
+  /** If false, don't kill the PTY session on unmount (for shared sessions). Default: true */
+  killOnCleanup?: boolean;
 }
 
 /**
@@ -17,7 +19,7 @@ interface UseTerminalSessionOptions {
  * - Provides resize() for dimension changes
  * - Kills PTY on unmount
  */
-export function useTerminalSession({ sessionId }: UseTerminalSessionOptions) {
+export function useTerminalSession({ sessionId, killOnCleanup = true }: UseTerminalSessionOptions) {
   const termRef = useRef<EmbeddedTerminalHandle | null>(null);
   const [status, setStatus] = useState<TerminalStatus>("connecting");
 
@@ -82,16 +84,18 @@ export function useTerminalSession({ sessionId }: UseTerminalSessionOptions) {
 
     setup();
 
-    // 3. Kill on unmount
+    // 3. Cleanup on unmount
     return () => {
       cancelled = true;
       unlistenOutput?.();
       unlistenClose?.();
-      invoke("kill_terminal", { sessionId }).catch((err) =>
-        console.error("kill_terminal cleanup failed:", err),
-      );
+      if (killOnCleanup) {
+        invoke("kill_terminal", { sessionId }).catch((err) =>
+          console.error("kill_terminal cleanup failed:", err),
+        );
+      }
     };
-  }, [sessionId]);
+  }, [sessionId, killOnCleanup]);
 
   return { termRef, status, write, resize };
 }

@@ -4,6 +4,7 @@ import { SystemStats } from "@/types/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
 import { TerminalNode } from "@/components/terminal-node";
+import { disposeTerminalInstance } from "@/components/embedded-terminal";
 import {
   ChevronDown,
   Expand,
@@ -170,11 +171,13 @@ function StatusIndicator({ status }: { status?: WorkspacePanel["status"] }) {
 
 function PanelCard({
   panel,
+  isFocused,
   onMaximize,
   onDispatch,
   onRemove,
 }: {
   panel: WorkspacePanel;
+  isFocused: boolean;
   onMaximize: (id: string) => void;
   onDispatch: (id: string) => void;
   onRemove: (id: string) => void;
@@ -221,10 +224,19 @@ function PanelCard({
           data-testid={`viewport-${panel.id}`}
         >
           {panel.kind === "terminal" ? (
-            <TerminalNode
-              sessionId={`terminal-${panel.id}`}
-              className="flex-1 min-h-0"
-            />
+            isFocused ? (
+              <div className="flex-1 min-h-0 flex items-center justify-center">
+                <span className="font-mono text-[10px] text-primary/40 uppercase tracking-[0.3em] animate-pulse">
+                  FOCUSED
+                </span>
+              </div>
+            ) : (
+              <TerminalNode
+                sessionId={`terminal-${panel.id}`}
+                className="flex-1 min-h-0"
+                killOnCleanup={false}
+              />
+            )
           ) : (
             <>
               {/* Scanline overlay for viewport */}
@@ -509,9 +521,11 @@ export default function CommandCenter() {
   const handleRemovePanel = useCallback((id: string) => {
     const panel = panels.find(p => p.id === id);
     if (panel?.kind === "terminal") {
-      invoke("kill_terminal", { sessionId: `terminal-${id}` }).catch((err) =>
+      const sid = `terminal-${id}`;
+      invoke("kill_terminal", { sessionId: sid }).catch((err) =>
         console.error("kill_terminal on remove failed:", err),
       );
+      disposeTerminalInstance(sid);
     }
     setPanels(prev => prev.filter(p => p.id !== id));
   }, [panels]);
@@ -762,6 +776,7 @@ export default function CommandCenter() {
                         <PanelCard
                           key={p.id}
                           panel={p}
+                          isFocused={activePanelId === p.id}
                           onMaximize={setActivePanelId}
                           onDispatch={dispatchTo}
                           onRemove={handleRemovePanel}
@@ -877,10 +892,10 @@ export default function CommandCenter() {
       {/* Focus Dialog */}
       <Dialog open={!!activePanel} onOpenChange={(o) => (!o ? setActivePanelId(null) : null)}>
         <DialogContent
-          className="max-w-[95vw] h-[85vh] bg-black border border-primary p-0 rounded-none gap-0 shadow-2xl shadow-primary/20"
+          className="max-w-[95vw] h-[85vh] bg-black border border-primary p-0 rounded-none shadow-2xl shadow-primary/20 flex flex-col"
           data-testid="dialog-focus"
         >
-           <DialogHeader className="h-12 border-b border-primary/30 flex flex-row items-center px-6 bg-primary/5 space-y-0 justify-between">
+           <DialogHeader className="h-12 shrink-0 border-b border-primary/30 flex flex-row items-center px-6 bg-primary/5 space-y-0 justify-between">
              <DialogTitle className="font-mono text-sm uppercase text-primary tracking-widest flex items-center gap-3" data-testid="text-focus-title">
                <span className="w-2 h-2 bg-primary animate-pulse shadow-[0_0_10px_#ccff00]"></span>
                {activePanel?.title}
@@ -890,11 +905,11 @@ export default function CommandCenter() {
              </div>
            </DialogHeader>
            
-           <div className="flex-1 min-h-0 bg-black relative overflow-hidden" data-testid="viewport-focus">
+           <div className="flex-1 min-h-0 bg-black overflow-hidden" data-testid="viewport-focus">
               {activePanel?.kind === "terminal" ? (
                 <TerminalNode
                   sessionId={`terminal-${activePanel.id}`}
-                  className="absolute inset-0"
+                  killOnCleanup={false}
                 />
               ) : (
                 <>
@@ -924,7 +939,7 @@ export default function CommandCenter() {
               )}
            </div>
            
-           <div className="h-14 border-t border-primary/30 bg-muted/10 flex items-center justify-between px-6">
+           <div className="h-14 shrink-0 border-t border-primary/30 bg-muted/10 flex items-center justify-between px-6">
               <div className="font-mono text-[10px] text-muted-foreground uppercase">
                 TARGET: {activePanel?.endpoint}
               </div>
