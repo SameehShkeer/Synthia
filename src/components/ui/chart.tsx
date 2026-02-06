@@ -3,8 +3,8 @@ import * as RechartsPrimitive from "recharts"
 
 import { cn } from "@/lib/utils"
 
-// Format: { THEME_NAME: CSS_SELECTOR }
-const THEMES = { light: "", dark: ".dark" } as const
+// Theme names for chart color configuration
+type ThemeName = "light" | "dark"
 
 export type ChartConfig = {
   [k in string]: {
@@ -12,7 +12,7 @@ export type ChartConfig = {
     icon?: React.ComponentType
   } & (
     | { color?: string; theme?: never }
-    | { color?: never; theme: Record<keyof typeof THEMES, string> }
+    | { color?: never; theme: Record<ThemeName, string> }
   )
 }
 
@@ -40,22 +40,58 @@ const ChartContainer = React.forwardRef<
       typeof RechartsPrimitive.ResponsiveContainer
     >["children"]
   }
->(({ id, className, children, config, ...props }, ref) => {
+>(({ id, className, children, config, style, ...props }, ref) => {
   const uniqueId = React.useId()
   const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`
+
+  // Track Tailwind dark mode class reactively via MutationObserver
+  const [isDark, setIsDark] = React.useState(
+    () => typeof document !== 'undefined' &&
+      document.documentElement.classList.contains('dark')
+  );
+
+  React.useEffect(() => {
+    const el = document.documentElement;
+    const observer = new MutationObserver(() => {
+      setIsDark(el.classList.contains('dark'));
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  // Build CSS custom properties from config using React's style prop
+  // Safe in CSR: values are set via CSSStyleDeclaration, not string interpolation
+  const chartVariables = React.useMemo(() => {
+    const vars: Record<string, string> = {};
+    const colorConfig = Object.entries(config).filter(
+      ([, cfg]) => cfg.theme || cfg.color
+    );
+
+    const activeTheme: ThemeName = isDark ? 'dark' : 'light';
+
+    colorConfig.forEach(([key, itemConfig]) => {
+      const color = itemConfig.theme?.[activeTheme] || itemConfig.color;
+      if (color) {
+        // React's style prop sets values via CSSStyleDeclaration — semicolons rejected
+        vars[`--color-${key}`] = color;
+      }
+    });
+
+    return vars as React.CSSProperties;
+  }, [config, isDark]);
 
   return (
     <ChartContext.Provider value={{ config }}>
       <div
         data-chart={chartId}
         ref={ref}
+        style={{ ...chartVariables, ...style }}
         className={cn(
           "flex aspect-video justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-none [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-sector]:outline-none [&_.recharts-surface]:outline-none",
           className
         )}
         {...props}
       >
-        <ChartStyle id={chartId} config={config} />
         <RechartsPrimitive.ResponsiveContainer>
           {children}
         </RechartsPrimitive.ResponsiveContainer>
@@ -64,39 +100,6 @@ const ChartContainer = React.forwardRef<
   )
 })
 ChartContainer.displayName = "Chart"
-
-const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
-  const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme || config.color
-  )
-
-  if (!colorConfig.length) {
-    return null
-  }
-
-  return (
-    <style
-      dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color =
-      itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
-      itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
-  })
-  .join("\n")}
-}
-`
-          )
-          .join("\n"),
-      }}
-    />
-  )
-}
 
 const ChartTooltip = RechartsPrimitive.Tooltip
 
@@ -387,5 +390,4 @@ export {
   ChartTooltipContent,
   ChartLegend,
   ChartLegendContent,
-  ChartStyle,
 }

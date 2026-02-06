@@ -290,6 +290,11 @@ pub async fn clear_logs(app: tauri::AppHandle) -> Result<bool, String> {
 }
 
 /// Get the path to the log file (for debugging/display purposes).
+///
+/// # Security Note
+/// This is a diagnostic command intended for development tooling and AI agents.
+/// It only returns the path string, not file contents. The path is within the
+/// OS-standard app data directory and contains no sensitive information.
 #[tauri::command]
 pub async fn get_log_path(app: tauri::AppHandle) -> Result<String, String> {
     let log_path = get_log_file_path(&app)

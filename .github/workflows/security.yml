@@ -1,55 +1,68 @@
-# KAN-20: Security Audit workflow for Rust dependencies
+# KAN-20/KAN-46: Security Audit workflow for Rust and npm dependencies
 name: Security Audit
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:  # Manual trigger from GitHub UI
   schedule:
     - cron: '0 0 * * *'  # Daily at midnight UTC
 
 jobs:
-  audit:
+  rust-audit:
     name: Rust Security Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write  # Required for actions-rust-lang/audit to create issues
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Audit Rust Dependencies
+        uses: actions-rust-lang/audit@v1
+        with:
+          file: src-tauri/Cargo.lock
+          # Uses .cargo/audit.toml automatically for ignore list
+          # See .cargo/audit.toml for ignored advisories (GTK/Linux deps from Tauri)
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+  npm-audit:
+    name: npm Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Run security audit
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
         run: |
-          echo "## 🔒 Security Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔒 npm Security Audit Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Run audit and capture output
+          # Run audit and capture output (--audit-level=high only fails on high/critical)
           set +e
-          OUTPUT=$(cargo audit --file src-tauri/Cargo.lock 2>&1)
+          OUTPUT=$(npm audit --audit-level=high 2>&1)
           EXIT_CODE=$?
           set -e
 
-          # Count findings
-          VULNS=$(echo "$OUTPUT" | grep -c "^Crate:" || echo "0")
-          WARNINGS=$(echo "$OUTPUT" | grep -c "Warning:" || echo "0")
-
           # Determine status
           if [ $EXIT_CODE -eq 0 ]; then
-            echo "✅ **Status: PASSED**" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Status: PASSED** (no high/critical vulnerabilities)" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ **Status: FAILED**" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Status: FAILED** (high/critical vulnerabilities found)" >> $GITHUB_STEP_SUMMARY
           fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Crates Scanned | $(grep -o '[0-9]* crate dependencies' <<< "$OUTPUT" | grep -o '[0-9]*' || echo 'N/A') |" >> $GITHUB_STEP_SUMMARY
-          echo "| Advisories Checked | $(grep -o '[0-9]* security advisories' <<< "$OUTPUT" | grep -o '[0-9]*' || echo 'N/A') |" >> $GITHUB_STEP_SUMMARY
-          echo "| Warnings | $WARNINGS |" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "<details><summary>📋 Full Output</summary>" >> $GITHUB_STEP_SUMMARY
