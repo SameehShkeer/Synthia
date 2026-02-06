@@ -6,6 +6,33 @@ import { cn } from "@/lib/utils"
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const
 
+// Security: Sanitize CSS identifier to prevent injection attacks
+// Only allows alphanumeric, hyphens, and underscores (valid CSS identifier chars)
+function sanitizeCssIdentifier(input: string): string {
+  return input.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+// Security: Validate CSS color value to prevent injection
+// Allows: hex colors, rgb/rgba, hsl/hsla, named colors, CSS variables
+function isValidCssColor(color: string): boolean {
+  const trimmed = color.trim();
+  // Reject if contains potentially dangerous characters
+  if (/[<>"'`{}();]/.test(trimmed)) {
+    return false;
+  }
+  // Allow common CSS color patterns
+  const validPatterns = [
+    /^#[0-9a-fA-F]{3,8}$/, // hex
+    /^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/, // rgb
+    /^rgba\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*[\d.]+\s*\)$/, // rgba
+    /^hsl\(\s*\d{1,3}\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?\s*\)$/, // hsl
+    /^hsla\(\s*\d{1,3}\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?\s*,\s*[\d.]+\s*\)$/, // hsla
+    /^var\(--[a-zA-Z0-9_-]+\)$/, // CSS variable
+    /^[a-zA-Z]+$/, // named colors (red, blue, etc.)
+  ];
+  return validPatterns.some((pattern) => pattern.test(trimmed));
+}
+
 export type ChartConfig = {
   [k in string]: {
     label?: React.ReactNode
@@ -42,7 +69,8 @@ const ChartContainer = React.forwardRef<
   }
 >(({ id, className, children, config, ...props }, ref) => {
   const uniqueId = React.useId()
-  const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`
+  // Security: Sanitize the chart ID to prevent CSS selector injection
+  const chartId = `chart-${sanitizeCssIdentifier(id || uniqueId.replace(/:/g, ""))}`
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -74,25 +102,33 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     return null
   }
 
+  // Security: Build CSS with sanitized identifiers and validated colors
+  // This prevents CSS injection attacks via dangerouslySetInnerHTML
+  const cssContent = Object.entries(THEMES)
+    .map(([theme, prefix]) => {
+      const sanitizedId = sanitizeCssIdentifier(id);
+      const colorDeclarations = colorConfig
+        .map(([key, itemConfig]) => {
+          const color =
+            itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
+            itemConfig.color;
+          // Validate color before including in CSS
+          if (color && isValidCssColor(color)) {
+            const sanitizedKey = sanitizeCssIdentifier(key);
+            return `  --color-${sanitizedKey}: ${color};`;
+          }
+          return null;
+        })
+        .filter(Boolean)
+        .join("\n");
+      return `${prefix} [data-chart=${sanitizedId}] {\n${colorDeclarations}\n}`;
+    })
+    .join("\n");
+
   return (
     <style
       dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color =
-      itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
-      itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
-  })
-  .join("\n")}
-}
-`
-          )
-          .join("\n"),
+        __html: cssContent,
       }}
     />
   )
