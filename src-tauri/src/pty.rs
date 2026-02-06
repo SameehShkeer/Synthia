@@ -414,6 +414,9 @@ pub fn list_terminals(
 // - No shell expansion or injection risks — commands are written as-is to PTY
 // - Session IDs must match existing sessions (no arbitrary session creation)
 // - All commands are logged for auditability
+// - No rate limiting on command injection — callers should throttle if needed
+// - No command length limit enforced — PTY write is unbounded; consider adding
+//   a max length guard if exposing to untrusted input sources
 // =============================================================================
 
 /// Inject a single command into a terminal session.

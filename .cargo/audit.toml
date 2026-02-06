@@ -5,6 +5,7 @@
 # Ignore transitive dependencies from Tauri that are outside our control.
 # These will be resolved when Tauri updates their dependencies.
 # See KAN-46 FINDING-016 for full analysis.
+# Reviewed: 2026-02-07. Revisit on next Tauri major dependency update.
 
 ignore = [
     # =========================================================================

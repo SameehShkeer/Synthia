@@ -44,29 +44,41 @@ const ChartContainer = React.forwardRef<
   const uniqueId = React.useId()
   const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`
 
+  // Track Tailwind dark mode class reactively via MutationObserver
+  const [isDark, setIsDark] = React.useState(
+    () => typeof document !== 'undefined' &&
+      document.documentElement.classList.contains('dark')
+  );
+
+  React.useEffect(() => {
+    const el = document.documentElement;
+    const observer = new MutationObserver(() => {
+      setIsDark(el.classList.contains('dark'));
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
   // Build CSS custom properties from config using React's style prop
-  // React automatically sanitizes these values - no XSS possible
+  // Safe in CSR: values are set via CSSStyleDeclaration, not string interpolation
   const chartVariables = React.useMemo(() => {
     const vars: Record<string, string> = {};
     const colorConfig = Object.entries(config).filter(
       ([, cfg]) => cfg.theme || cfg.color
     );
 
-    // Detect current theme (Tailwind dark mode uses .dark class on html/body)
-    const isDark = typeof document !== 'undefined' &&
-      document.documentElement.classList.contains('dark');
     const activeTheme: ThemeName = isDark ? 'dark' : 'light';
 
     colorConfig.forEach(([key, itemConfig]) => {
       const color = itemConfig.theme?.[activeTheme] || itemConfig.color;
       if (color) {
-        // React's style prop automatically escapes values - secure by design
+        // React's style prop sets values via CSSStyleDeclaration — semicolons rejected
         vars[`--color-${key}`] = color;
       }
     });
 
     return vars as React.CSSProperties;
-  }, [config]);
+  }, [config, isDark]);
 
   return (
     <ChartContext.Provider value={{ config }}>
