@@ -377,6 +377,10 @@ pub fn kill_all_sessions(state: &PtyState) {
 }
 
 /// List all active terminal sessions.
+///
+/// # Security Note
+/// This is a diagnostic command for AI agents and development tooling.
+/// Only returns session IDs and alive status — no sensitive data exposed.
 #[tauri::command]
 pub fn list_terminals(
     state: State<'_, PtyState>,
@@ -400,11 +404,26 @@ pub fn list_terminals(
 // =============================================================================
 // AI Agent Commands
 // =============================================================================
+//
+// These commands are designed for AI agent integration (e.g., Claude Code,
+// automated testing, or assistive tooling). They allow programmatic control
+// of terminal sessions.
+//
+// SECURITY CONSIDERATIONS:
+// - Commands execute with the same privileges as the user running the app
+// - No shell expansion or injection risks — commands are written as-is to PTY
+// - Session IDs must match existing sessions (no arbitrary session creation)
+// - All commands are logged for auditability
+// =============================================================================
 
 /// Inject a single command into a terminal session.
 ///
 /// Appends a newline to execute the command. The command appears in the
 /// terminal as if the user typed it.
+///
+/// # Security Note
+/// This command is intended for AI agent integration. The injected command
+/// runs with user privileges. All injections are logged for auditability.
 #[tauri::command]
 pub fn inject_command(
     state: State<'_, PtyState>,
@@ -449,6 +468,10 @@ pub fn inject_command(
 ///
 /// Each command is sent with a newline. A short delay between commands
 /// allows the shell to process each one.
+///
+/// # Security Note
+/// This command is intended for AI agent integration. Each injected command
+/// runs with user privileges. All injections are logged for auditability.
 #[tauri::command]
 pub async fn inject_commands(
     state: State<'_, PtyState>,
