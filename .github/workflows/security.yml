@@ -29,7 +29,8 @@ jobs:
           echo "## 🔒 Rust Security Audit Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Run audit and capture output
+          # Run audit with config file that ignores known unmaintained transitive deps
+          # See .cargo/audit.toml for ignored advisories (GTK/Linux deps from Tauri)
           set +e
           OUTPUT=$(cargo audit --file src-tauri/Cargo.lock 2>&1)
           EXIT_CODE=$?
