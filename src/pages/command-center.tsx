@@ -216,12 +216,12 @@ function PanelCard({
 
       <div className="p-2 relative z-10">
         <div
-          className="relative aspect-video w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors"
+          className="relative aspect-video w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors flex flex-col"
           data-testid={`viewport-${panel.id}`}
         >
           {panel.kind === "terminal" ? (
             isFocused ? (
-              <div className="absolute inset-0 flex items-center justify-center">
+              <div className="flex-1 min-h-0 flex items-center justify-center">
                 <span className="font-mono text-[10px] text-primary/40 uppercase tracking-[0.3em] animate-pulse">
                   FOCUSED
                 </span>
@@ -229,7 +229,7 @@ function PanelCard({
             ) : (
               <TerminalNode
                 sessionId={`terminal-${panel.id}`}
-                className="absolute inset-x-0 top-0 bottom-7"
+                className="flex-1 min-h-0"
                 killOnCleanup={false}
                 cwd={panel.cwd}
               />
@@ -253,7 +253,7 @@ function PanelCard({
             </>
           )}
 
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-black/90 p-1 border-t border-border">
+          <div className="shrink-0 flex items-center justify-between bg-black/90 p-1 border-t border-border relative z-10">
             <div className="flex items-center gap-2 min-w-0">
               <div
                 className="font-mono text-[9px] text-primary/80 uppercase tracking-widest pl-1"
