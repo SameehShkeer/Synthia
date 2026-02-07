@@ -39,3 +39,25 @@ export interface TerminalOutput {
   data: string;
   timestamp: string;
 }
+
+/**
+ * Stream status returned by get_stream_status command.
+ * Must match StreamStatus struct in src-tauri/src/streaming.rs
+ */
+export interface StreamStatus {
+  active: boolean;
+  port: number;
+  fps: number;
+  quality: number;
+  clients: number;
+}
+
+/**
+ * Display info returned by list_displays command.
+ * Must match DisplayInfo struct in src-tauri/src/streaming.rs
+ */
+export interface DisplayInfo {
+  id: number;
+  title: string;
+  is_primary: boolean;
+}
