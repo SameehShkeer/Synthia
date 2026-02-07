@@ -253,7 +253,7 @@ function PanelCard({
             </>
           )}
 
-          <div className="shrink-0 flex items-center justify-between bg-black/90 p-1 border-t border-border relative z-10">
+          <div className="mt-auto shrink-0 flex items-center justify-between bg-black/90 p-1 border-t border-border relative z-10">
             <div className="flex items-center gap-2 min-w-0">
               <div
                 className="font-mono text-[9px] text-primary/80 uppercase tracking-widest pl-1"
