@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { Plus, Save, Settings as SettingsIcon, Trash2, ArrowLeft } from "lucide-react";
+import { Plus, Save, Settings as SettingsIcon, Trash2, ArrowLeft, Monitor, Play, Square, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +14,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
+import { invoke } from "@tauri-apps/api/core";
+import type { StreamStatus, DisplayInfo } from "@/types/tauri";
+import { cn } from "@/lib/utils";
 
 type StreamSource = {
   id: string;
@@ -116,10 +120,253 @@ function SectionTitle({ title, desc }: { title: string; desc: string }) {
   );
 }
 
+function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean) => void }) {
+  const [displays, setDisplays] = useState<DisplayInfo[]>([]);
+  const [status, setStatus] = useState<StreamStatus>({
+    active: false,
+    port: 9100,
+    fps: 30,
+    quality: 80,
+    clients: 0,
+  });
+
+  useEffect(() => {
+    onStatusChange(status.active);
+  }, [status.active, onStatusChange]);
+
+  const [selectedDisplayId, setSelectedDisplayId] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [config, setConfig] = useState({
+    port: 9100,
+    fps: 30,
+    quality: 80,
+  });
+
+  useEffect(() => {
+    invoke<DisplayInfo[]>("list_displays")
+      .then((d) => {
+        setDisplays(d);
+        const primary = d.find((display) => display.is_primary);
+        if (primary) setSelectedDisplayId(primary.id.toString());
+        else if (d.length > 0) setSelectedDisplayId(d[0].id.toString());
+      })
+      .catch((err) => {
+        console.error("Failed to load displays", err);
+        setError("Could not detect displays. Screen capture requires a physical or virtual display.");
+      });
+
+    const interval = setInterval(() => {
+      invoke<StreamStatus>("get_stream_status")
+        .then((s) => setStatus(s))
+        .catch(() => {});
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleStart = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const newStatus = await invoke<StreamStatus>("start_local_stream", {
+        port: config.port,
+        fps: config.fps,
+        quality: config.quality,
+        display_id: parseInt(selectedDisplayId),
+      });
+      setStatus(newStatus);
+    } catch (err) {
+      console.error("Start failed", err);
+      setError("Failed to start capture server. Check port availability.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setIsLoading(true);
+    try {
+      await invoke("stop_local_stream");
+      setStatus((prev) => ({ ...prev, active: false }));
+    } catch (err) {
+      console.error("Stop failed", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const endpointUrl = `ws://127.0.0.1:${status.active ? status.port : config.port}`;
+
+  if (error && displays.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="border border-border bg-black/40 p-4 mb-8">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="grid h-8 w-8 place-items-center bg-primary/10 border border-primary/20 text-primary">
+            <Monitor className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="font-mono text-sm font-bold uppercase text-primary">
+              Local Capture
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={cn(
+                "inline-block h-1.5 w-1.5 rounded-full",
+                status.active ? "bg-primary animate-pulse" : "bg-muted-foreground"
+              )} />
+              <span className={cn(
+                "font-mono text-[10px] uppercase tracking-widest",
+                status.active ? "text-primary" : "text-muted-foreground"
+              )}>
+                {status.active ? "Streaming" : "Inactive"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {status.active ? (
+          <Button
+            variant="destructive"
+            size="sm"
+            className="rounded-none font-mono text-xs uppercase"
+            onClick={handleStop}
+            disabled={isLoading}
+          >
+            <Square className="mr-2 h-3 w-3 fill-current" />
+            Stop Capture
+          </Button>
+        ) : (
+          <Button
+            className="rounded-none bg-primary text-black font-mono text-xs font-bold uppercase hover:bg-white"
+            onClick={handleStart}
+            disabled={isLoading || !selectedDisplayId}
+          >
+            <Play className="mr-2 h-3 w-3 fill-current" />
+            Start Capture
+          </Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-4">
+          <div>
+            <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Source Display</div>
+            <Select
+              value={selectedDisplayId}
+              onValueChange={setSelectedDisplayId}
+              disabled={status.active}
+            >
+              <SelectTrigger className="rounded-none border-border bg-black font-mono text-xs focus:ring-0 focus:border-primary">
+                <SelectValue placeholder="Select display..." />
+              </SelectTrigger>
+              <SelectContent className="rounded-none border-border bg-card">
+                {displays.map((d) => (
+                  <SelectItem key={d.id} value={d.id.toString()} className="font-mono text-xs">
+                    {d.title} {d.is_primary && "(Primary)"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground flex justify-between">
+                <span>Quality</span>
+                <span className="text-primary">{status.active ? status.quality : config.quality}%</span>
+              </div>
+              <Slider
+                disabled={status.active}
+                value={[status.active ? status.quality : config.quality]}
+                onValueChange={([v]) => setConfig((prev) => ({ ...prev, quality: v }))}
+                min={1}
+                max={100}
+                step={1}
+                className="py-2"
+              />
+            </div>
+            <div>
+              <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground flex justify-between">
+                <span>FPS</span>
+                <span className="text-primary">{status.active ? status.fps : config.fps}</span>
+              </div>
+              <Slider
+                disabled={status.active}
+                value={[status.active ? status.fps : config.fps]}
+                onValueChange={([v]) => setConfig((prev) => ({ ...prev, fps: v }))}
+                min={1}
+                max={30}
+                step={1}
+                className="py-2"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Port</div>
+            <Input
+              type="number"
+              disabled={status.active}
+              value={status.active ? status.port : config.port}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val) && val >= 9100 && val <= 9199) {
+                  setConfig((prev) => ({ ...prev, port: val }));
+                }
+              }}
+              min={9100}
+              max={9199}
+              className="rounded-none border-border bg-black font-mono text-xs focus:border-primary"
+            />
+          </div>
+
+          <div>
+            <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Endpoint URL</div>
+            <div className="flex gap-2">
+              <div className="flex-1 px-3 py-2 bg-muted/10 border border-border font-mono text-xs text-muted-foreground truncate select-all">
+                {endpointUrl}
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="rounded-none border-border hover:bg-white hover:text-black"
+                onClick={() => navigator.clipboard.writeText(endpointUrl)}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          {status.active && (
+            <div className="font-mono text-[10px] text-primary pt-1">
+              {status.clients} client(s) connected
+            </div>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <div className="mt-4 p-3 border border-destructive/50 bg-destructive/10 text-destructive font-mono text-xs flex items-center gap-2">
+          <div className="h-2 w-2 bg-destructive rounded-full animate-pulse" />
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Settings() {
   const [streams, setStreams] = useState<StreamSource[]>(seedStreams);
   const [terminals, setTerminals] = useState<TerminalTarget[]>(seedTerminals);
   const [mcps, setMcps] = useState<McpConn[]>(seedMcps);
+  const [isLocalCaptureActive, setIsLocalCaptureActive] = useState(false);
 
   const [draftNotes, setDraftNotes] = useState(
     "In this prototype, settings are stored only in memory.\n\nIn a full build, these would persist and drive real embeds/dispatch to agent terminals and IDE streams.",
@@ -127,11 +374,11 @@ export default function Settings() {
 
   const counts = useMemo(() => {
     return {
-      streams: streams.length,
+      streams: streams.length + (isLocalCaptureActive ? 1 : 0),
       terminals: terminals.length,
       mcps: mcps.length,
     };
-  }, [streams, terminals, mcps]);
+  }, [streams, terminals, mcps, isLocalCaptureActive]);
 
   return (
     <div className="min-h-screen bg-background font-sans selection:bg-primary selection:text-black">
@@ -179,7 +426,7 @@ export default function Settings() {
       <main className="mx-auto max-w-[1200px] px-5 py-8">
         <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="brutal-border p-4 hover:border-primary transition-colors" data-testid="card-settings-streams">
-            <div className="font-mono text-[10px] uppercase text-muted-foreground">Active Streams</div>
+            <div className="font-mono text-[10px] uppercase text-muted-foreground">Configured Streams</div>
             <div className="mt-1 text-4xl font-display font-black text-primary" data-testid="text-settings-streams-count">
               {counts.streams.toString().padStart(2, '0')}
             </div>
@@ -213,9 +460,19 @@ export default function Settings() {
             </TabsList>
 
             <TabsContent value="streams" className="mt-0 space-y-6">
+              <div>
+                <SectionTitle
+                  title="Local Broadcast"
+                  desc="Capture this display and stream it to the network via MJPEG."
+                />
+                <LocalCaptureCard onStatusChange={setIsLocalCaptureActive} />
+              </div>
+
+              <Separator className="my-6 opacity-20" />
+
               <SectionTitle
-                title="Live streams"
-                desc="Add the IP, port, and path for each Agentic IDE stream."
+                title="Remote Feeds"
+                desc="Configure external IDE streams and camera feeds to monitor."
               />
 
               <div className="space-y-4" data-testid="list-streams">
