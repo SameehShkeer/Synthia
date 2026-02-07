@@ -216,7 +216,7 @@ function PanelCard({
 
       <div className="p-2 relative z-10">
         <div
-          className={`relative w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors flex flex-col ${panel.kind === "terminal" ? "h-[240px]" : "aspect-video"}`}
+          className="relative aspect-video w-full overflow-hidden border border-border bg-black group-hover:border-primary/30 transition-colors flex flex-col"
           data-testid={`viewport-${panel.id}`}
         >
           {panel.kind === "terminal" ? (
@@ -253,7 +253,7 @@ function PanelCard({
             </>
           )}
 
-          <div className="flex items-center justify-between bg-black/90 p-1 border-t border-border shrink-0">
+          <div className="mt-auto shrink-0 flex items-center justify-between bg-black/90 p-1 border-t border-border relative z-10">
             <div className="flex items-center gap-2 min-w-0">
               <div
                 className="font-mono text-[9px] text-primary/80 uppercase tracking-widest pl-1"
