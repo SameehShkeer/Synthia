@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.synthia.websockify — launchd agent that keeps websockify running.
+
+  Install:
+    cp scripts/com.synthia.websockify.plist ~/Library/LaunchAgents/
+    # Edit the path to websockify below to match your setup
+    launchctl load ~/Library/LaunchAgents/com.synthia.websockify.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.synthia.websockify.plist
+    rm ~/Library/LaunchAgents/com.synthia.websockify.plist
+
+  Logs:
+    tail -f /tmp/synthia-websockify-stdout.log
+    tail -f /tmp/synthia-websockify-stderr.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.synthia.websockify</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- EDIT THIS: absolute path to your websockify binary -->
+    <string>/usr/local/bin/websockify</string>
+    <string>--verbose</string>
+    <string>--heartbeat</string>
+    <string>30</string>
+    <string>6080</string>
+    <string>localhost:5900</string>
+  </array>
+
+  <!-- Start automatically at login -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart if websockify crashes -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <!-- Throttle restarts: wait 5 s between retries -->
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/synthia-websockify-stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/synthia-websockify-stderr.log</string>
+</dict>
+</plist>
