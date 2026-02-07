@@ -4,6 +4,7 @@ import { SystemStats } from "@/types/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
 import { TerminalNode } from "@/components/terminal-node";
+import { VncStream } from "@/components/vnc-stream";
 import { disposeTerminalInstance } from "@/components/embedded-terminal";
 import {
   ChevronDown,
@@ -99,14 +100,14 @@ const MOCK_PANELS: WorkspacePanel[] = [
     kind: "stream",
     title: "IDE_STREAM_FRONTEND",
     status: "running",
-    cwd: "http://localhost:8080/live/frontend.m3u8",
+    cwd: "ws://localhost:6080",
   },
   {
     id: "stream-ide-2",
     kind: "stream",
     title: "IDE_STREAM_BACKEND",
     status: "attention",
-    cwd: "http://localhost:8080/live/backend.m3u8",
+    cwd: "ws://localhost:6081",
   },
 ];
 
@@ -234,6 +235,10 @@ function PanelCard({
                 cwd={panel.cwd}
               />
             )
+          ) : panel.cwd?.startsWith("ws://") || panel.cwd?.startsWith("wss://") ? (
+            <div className="absolute inset-0">
+              <VncStream url={panel.cwd} />
+            </div>
           ) : (
             <>
               {/* Scanline overlay for viewport */}
@@ -908,6 +913,8 @@ export default function CommandCenter() {
                   killOnCleanup={false}
                   cwd={activePanel.cwd}
                 />
+              ) : activePanel?.cwd?.startsWith("ws://") || activePanel?.cwd?.startsWith("wss://") ? (
+                <VncStream url={activePanel.cwd} />
               ) : (
                 <>
                   <div className="absolute inset-0 opacity-10"
