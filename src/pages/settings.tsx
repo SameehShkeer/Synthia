@@ -18,7 +18,7 @@ import { Separator } from "@/components/ui/separator";
 type StreamSource = {
   id: string;
   name: string;
-  protocol: "HLS" | "WebRTC" | "RTSP" | "MJPEG";
+  protocol: "VNC" | "HLS" | "WebRTC" | "RTSP" | "MJPEG";
   ip: string;
   port: string;
   path: string;
@@ -47,19 +47,19 @@ const seedStreams: StreamSource[] = [
   {
     id: "stream-1",
     name: "IDE_STREAM_FRONTEND",
-    protocol: "HLS",
+    protocol: "VNC",
     ip: "localhost",
-    port: "8080",
-    path: "/live/frontend.m3u8",
+    port: "6080",
+    path: "",
     enabled: false, // Disabled by default until configured
   },
   {
     id: "stream-2",
     name: "IDE_STREAM_BACKEND",
-    protocol: "HLS",
+    protocol: "VNC",
     ip: "localhost",
-    port: "8081",
-    path: "/live/backend.m3u8",
+    port: "6081",
+    path: "",
     enabled: false, // Disabled by default until configured
   },
 ];
@@ -231,7 +231,9 @@ export default function Settings() {
                           {s.name}
                         </div>
                         <div className="mt-1 font-mono text-xs text-muted-foreground" data-testid={`text-stream-url-${s.id}`}>
-                          {`${s.protocol}://${s.ip}:${s.port}${s.path}`}
+                          {s.protocol === "VNC"
+                            ? `ws://${s.ip}:${s.port}`
+                            : `${s.protocol.toLowerCase()}://${s.ip}:${s.port}${s.path}`}
                         </div>
                       </div>
 
@@ -298,7 +300,7 @@ export default function Settings() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="rounded-none border-border bg-card">
-                            {(["HLS", "WebRTC", "RTSP", "MJPEG"] as const).map((p) => (
+                            {(["VNC", "HLS", "WebRTC", "RTSP", "MJPEG"] as const).map((p) => (
                               <SelectItem
                                 key={p}
                                 value={p}
@@ -374,10 +376,10 @@ export default function Settings() {
                       {
                         id: `stream-${Date.now()}`,
                         name: `STREAM_${prev.length + 1}`,
-                        protocol: "HLS",
+                        protocol: "VNC",
                         ip: "",
                         port: "",
-                        path: "/live/stream.m3u8",
+                        path: "",
                         enabled: true,
                       },
                     ])
