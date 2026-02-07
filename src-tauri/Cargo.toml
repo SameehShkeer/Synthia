@@ -33,11 +33,12 @@ uuid = { version = "1", features = ["v4"] }
 nix = { version = "0.29", features = ["signal"] }
 
 # Screen streaming (MJPEG over WebSocket)
-scap = "0.1.0-beta.1"
+scap = "=0.1.0-beta.1"  # Pinned: pre-release beta, monitor CapSoftware/scap for updates
 turbojpeg = { version = "1.4", features = ["image"] }
 tokio-tungstenite = "0.28"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 image = "0.25"
+bytes = "1"
 
 [profile.release]
 panic = "abort"

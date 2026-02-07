@@ -37,6 +37,7 @@ const INITIAL_BACKOFF_MS = 1_000;
 /**
  * MJPEG WebSocket stream viewer with connection lifecycle management.
  * Receives binary JPEG frames over WebSocket and renders them on a canvas.
+ * Uses createImageBitmap for optimal rendering performance.
  * Shows visual overlays for connecting/disconnected/error states
  * and auto-reconnects with exponential backoff.
  */
@@ -51,6 +52,7 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
       null,
     );
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
     // Track FPS
@@ -58,19 +60,21 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
     const frameCountRef = useRef(0);
     const fpsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+    // Stable refs for connect/scheduleReconnect to break circular dependency
+    const connectRef = useRef<() => void>(() => {});
+    const onStateChangeRef = useRef(onStateChange);
+    onStateChangeRef.current = onStateChange;
+
     useImperativeHandle(ref, () => ({
       get canvas() {
         return canvasRef.current;
       },
     }));
 
-    const updateState = useCallback(
-      (next: StreamConnectionState) => {
-        setConnState(next);
-        onStateChange?.(next);
-      },
-      [onStateChange],
-    );
+    const updateState = useCallback((next: StreamConnectionState) => {
+      setConnState(next);
+      onStateChangeRef.current?.(next);
+    }, []);
 
     const clearTimers = useCallback(() => {
       if (retryTimerRef.current) {
@@ -101,16 +105,14 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
 
       retryTimerRef.current = setTimeout(() => {
         backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS);
-        connect();
+        connectRef.current();
       }, delay);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [clearTimers]);
 
     const handleRetryNow = useCallback(() => {
       clearTimers();
       backoffRef.current = INITIAL_BACKOFF_MS;
-      connect();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      connectRef.current();
     }, [clearTimers]);
 
     const connect = useCallback(() => {
@@ -150,43 +152,44 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
           if (!(event.data instanceof ArrayBuffer)) return;
 
           const blob = new Blob([event.data], { type: "image/jpeg" });
-          const imgUrl = URL.createObjectURL(blob);
-          const img = new Image();
 
-          img.onload = () => {
+          // createImageBitmap is faster than Blob→ObjectURL→Image pipeline:
+          // decodes off main thread, avoids URL lifecycle management
+          createImageBitmap(blob).then((bitmap) => {
             const canvas = canvasRef.current;
             if (!canvas) {
-              URL.revokeObjectURL(imgUrl);
+              bitmap.close();
               return;
             }
 
             // Resize canvas to match the frame if needed
-            if (canvas.width !== img.width || canvas.height !== img.height) {
-              canvas.width = img.width;
-              canvas.height = img.height;
+            if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+              canvas.width = bitmap.width;
+              canvas.height = bitmap.height;
+              // Invalidate cached context on resize (canvas resets context)
+              ctxRef.current = null;
             }
 
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              ctx.drawImage(img, 0, 0);
+            // Cache canvas context to avoid per-frame getContext() overhead
+            if (!ctxRef.current) {
+              ctxRef.current = canvas.getContext("2d");
             }
 
-            URL.revokeObjectURL(imgUrl);
+            ctxRef.current?.drawImage(bitmap, 0, 0);
+            bitmap.close();
             frameCountRef.current++;
-          };
-
-          img.onerror = () => {
-            URL.revokeObjectURL(imgUrl);
-          };
-
-          img.src = imgUrl;
+          }).catch(() => {
+            // Silently ignore decode failures (corrupted frame)
+          });
         };
       } catch {
         updateState("error");
         scheduleReconnect();
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [url, updateState, clearTimers, scheduleReconnect]);
+
+    // Keep connectRef in sync with the latest connect function
+    connectRef.current = connect;
 
     // Connect on mount and when URL changes
     useEffect(() => {
@@ -205,8 +208,7 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
           wsRef.current = null;
         }
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [url]);
+    }, [url, clearTimers, connect]);
 
     // FPS counter
     useEffect(() => {

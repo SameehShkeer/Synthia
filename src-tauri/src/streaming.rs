@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -9,6 +10,24 @@ use tokio_tungstenite::tungstenite::Message;
 
 use scap::frame::{Frame, FrameType, VideoFrame};
 use scap::capturer::{Capturer, Options, Resolution};
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Allowed streaming port range (unprivileged, dedicated to streaming)
+const STREAM_PORT_MIN: u16 = 9100;
+const STREAM_PORT_MAX: u16 = 9199;
+
+/// Maximum FPS to prevent resource exhaustion
+const MAX_FPS: u32 = 30;
+
+/// Allowed WebSocket Origin values for the Tauri webview
+const ALLOWED_ORIGINS: &[&str] = &[
+    "tauri://localhost",
+    "https://tauri.localhost",
+    "http://localhost:1420", // dev server
+];
 
 // =============================================================================
 // Types
@@ -35,6 +54,8 @@ pub struct DisplayInfo {
 /// Active streaming session with handles to shut it down
 struct StreamSession {
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    capture_handle: Option<std::thread::JoinHandle<()>>,
+    ws_handle: Option<tokio::task::JoinHandle<()>>,
     port: u16,
     fps: u32,
     quality: i32,
@@ -101,9 +122,19 @@ pub async fn start_local_stream(
         return Err("Stream already running. Stop it first.".into());
     }
 
-    // Validate parameters
-    let quality = quality.clamp(1, 100);
-    let fps = fps.clamp(1, 60);
+    // Validate parameters with explicit errors instead of silent clamping
+    if !(1..=100).contains(&quality) {
+        return Err(format!("Quality must be 1-100, got: {}", quality));
+    }
+    if !(1..=MAX_FPS).contains(&fps) {
+        return Err(format!("FPS must be 1-{}, got: {}", MAX_FPS, fps));
+    }
+    if !(STREAM_PORT_MIN..=STREAM_PORT_MAX).contains(&port) {
+        return Err(format!(
+            "Streaming port must be {}-{}, got: {}",
+            STREAM_PORT_MIN, STREAM_PORT_MAX, port
+        ));
+    }
 
     if !scap::is_supported() {
         return Err("Screen capture not supported on this platform".into());
@@ -145,8 +176,8 @@ pub async fn start_local_stream(
 
     log::info!("MJPEG WebSocket server starting on ws://127.0.0.1:{}", actual_port);
 
-    // Broadcast channel for JPEG frames
-    let (frame_tx, _) = broadcast::channel::<Arc<Vec<u8>>>(4);
+    // Broadcast channel for JPEG frames (Bytes for zero-copy cloning)
+    let (frame_tx, _) = broadcast::channel::<Bytes>(16);
 
     // Spawn the capture thread (blocking - scap uses blocking get_next_frame)
     let capture_frame_tx = frame_tx.clone();
@@ -154,7 +185,7 @@ pub async fn start_local_stream(
     let capture_quality = quality;
     let capture_fps = fps;
 
-    std::thread::spawn(move || {
+    let capture_handle = std::thread::spawn(move || {
         let options = Options {
             fps: capture_fps,
             show_cursor: true,
@@ -212,8 +243,8 @@ pub async fn start_local_stream(
 
                     match compressor.compress_to_vec(image) {
                         Ok(jpeg_data) => {
-                            // Ignore send error (no receivers)
-                            let _ = capture_frame_tx.send(Arc::new(jpeg_data));
+                            // Bytes::from(Vec) is zero-copy; clone() is O(1) ref-count
+                            let _ = capture_frame_tx.send(Bytes::from(jpeg_data));
                         }
                         Err(e) => {
                             log::warn!("JPEG compression failed: {}", e);
@@ -238,7 +269,7 @@ pub async fn start_local_stream(
     let ws_client_count = client_count.clone();
     let ws_shutdown_rx = shutdown_rx.clone();
 
-    tokio::spawn(async move {
+    let ws_handle = tokio::spawn(async move {
         loop {
             let mut shutdown = ws_shutdown_rx.clone();
 
@@ -278,6 +309,8 @@ pub async fn start_local_stream(
 
     *session = Some(StreamSession {
         shutdown_tx,
+        capture_handle: Some(capture_handle),
+        ws_handle: Some(ws_handle),
         port: actual_port,
         fps,
         quality,
@@ -295,7 +328,19 @@ pub async fn stop_local_stream(
     let mut session = state.session.lock().await;
 
     if let Some(s) = session.take() {
+        // Signal shutdown to capture thread and WS server
         let _ = s.shutdown_tx.send(true);
+
+        // Wait for the WebSocket server task to finish
+        if let Some(ws) = s.ws_handle {
+            let _ = ws.await;
+        }
+
+        // Wait for the capture thread to finish
+        if let Some(cap) = s.capture_handle {
+            let _ = cap.join();
+        }
+
         log::info!("Local stream stopped");
         Ok(())
     } else {
@@ -332,13 +377,43 @@ pub async fn get_stream_status(
 // WebSocket Client Handler
 // =============================================================================
 
+/// Validate WebSocket Origin header against allowed origins.
+/// Returns true if the origin is in the allowlist.
+fn is_allowed_origin(origin: &str) -> bool {
+    ALLOWED_ORIGINS.iter().any(|a| *a == origin)
+}
+
 async fn handle_ws_client(
     stream: tokio::net::TcpStream,
-    mut frame_rx: broadcast::Receiver<Arc<Vec<u8>>>,
+    mut frame_rx: broadcast::Receiver<Bytes>,
     client_count: Arc<std::sync::atomic::AtomicUsize>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
-    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+    // Validate Origin header during WebSocket handshake to prevent
+    // DNS rebinding and Cross-Site WebSocket Hijacking (CSWSH) attacks.
+    let ws_stream = match tokio_tungstenite::accept_hdr_async(
+        stream,
+        |req: &tokio_tungstenite::tungstenite::handshake::server::Request,
+         resp: tokio_tungstenite::tungstenite::handshake::server::Response| {
+            let origin = req
+                .headers()
+                .get("Origin")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+
+            if is_allowed_origin(origin) {
+                Ok(resp)
+            } else {
+                log::warn!("Rejected WebSocket connection from origin: {}", origin);
+                Err(tokio_tungstenite::tungstenite::handshake::server::Response::builder()
+                    .status(403)
+                    .body(Some("Forbidden: invalid origin".into()))
+                    .unwrap())
+            }
+        },
+    )
+    .await
+    {
         Ok(ws) => ws,
         Err(e) => {
             log::error!("WebSocket handshake failed: {}", e);
@@ -356,7 +431,8 @@ async fn handle_ws_client(
             frame = frame_rx.recv() => {
                 match frame {
                     Ok(jpeg_data) => {
-                        if let Err(e) = ws_sender.send(Message::Binary((*jpeg_data).clone().into())).await {
+                        // Bytes::clone() is O(1) ref-count increment — zero-copy
+                        if let Err(e) = ws_sender.send(Message::Binary(jpeg_data.to_vec().into())).await {
                             log::debug!("WebSocket send error (client disconnected): {}", e);
                             break;
                         }
