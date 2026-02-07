@@ -229,7 +229,7 @@ function PanelCard({
             ) : (
               <TerminalNode
                 sessionId={`terminal-${panel.id}`}
-                className="absolute inset-0"
+                className="absolute inset-x-0 top-0 bottom-7"
                 killOnCleanup={false}
                 cwd={panel.cwd}
               />
