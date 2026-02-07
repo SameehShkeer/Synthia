@@ -4,7 +4,7 @@ import { SystemStats } from "@/types/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
 import { TerminalNode } from "@/components/terminal-node";
-import { VncStream } from "@/components/vnc-stream";
+import { VncStream, type VncConnectionState } from "@/components/vnc-stream";
 import { disposeTerminalInstance } from "@/components/embedded-terminal";
 import {
   ChevronDown,
@@ -172,15 +172,32 @@ function PanelCard({
   onMaximize,
   onDispatch,
   onRemove,
+  vncState,
+  onVncStateChange,
 }: {
   panel: WorkspacePanel;
   isFocused: boolean;
   onMaximize: (id: string) => void;
   onDispatch: (id: string) => void;
   onRemove: (id: string) => void;
+  vncState?: VncConnectionState;
+  onVncStateChange?: (id: string, state: VncConnectionState) => void;
 }) {
   const icon = panel.kind === "terminal" ? TerminalSquare : PanelsTopLeft;
   const Icon = icon;
+
+  const isVncStream =
+    panel.kind === "stream" &&
+    (panel.cwd?.startsWith("ws://") || panel.cwd?.startsWith("wss://"));
+
+  // Derive effective panel status from VNC connection state for stream panels
+  const effectiveStatus: WorkspacePanel["status"] = isVncStream
+    ? vncState === "connected"
+      ? "running"
+      : vncState === "disconnected" || vncState === "error"
+        ? "attention"
+        : "idle"
+    : panel.status;
 
   return (
     <div
@@ -197,7 +214,7 @@ function PanelCard({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <StatusIndicator status={panel.status} />
+          <StatusIndicator status={effectiveStatus} />
           <button
             onClick={() => onMaximize(panel.id)}
             className="text-muted-foreground hover:text-primary hover:scale-110 transition-transform"
@@ -235,9 +252,12 @@ function PanelCard({
                 cwd={panel.cwd}
               />
             )
-          ) : panel.cwd?.startsWith("ws://") || panel.cwd?.startsWith("wss://") ? (
+          ) : isVncStream ? (
             <div className="absolute inset-0">
-              <VncStream url={panel.cwd} />
+              <VncStream
+                url={panel.cwd!}
+                onStateChange={(state) => onVncStateChange?.(panel.id, state)}
+              />
             </div>
           ) : (
             <>
@@ -261,10 +281,18 @@ function PanelCard({
           <div className="mt-auto shrink-0 flex items-center justify-between bg-black/90 p-1 border-t border-border relative z-10">
             <div className="flex items-center gap-2 min-w-0">
               <div
-                className="font-mono text-[9px] text-primary/80 uppercase tracking-widest pl-1"
+                className={`font-mono text-[9px] uppercase tracking-widest pl-1 ${
+                  isVncStream && vncState !== "connected"
+                    ? "text-muted-foreground"
+                    : "text-primary/80"
+                }`}
                 data-testid={`badge-kind-${panel.id}`}
               >
-                SYS::{panel.kind.toUpperCase()}
+                SYS::{isVncStream
+                  ? vncState === "connected"
+                    ? "STREAM"
+                    : "OFFLINE"
+                  : panel.kind.toUpperCase()}
               </div>
 
               {panel.activeWorkItemId && (
@@ -376,6 +404,12 @@ export default function CommandCenter() {
   const [plan, setPlan] = useState<WorkItem[]>(INITIAL_PLAN);
   const [chat, setChat] = useState<ChatMessage[]>(INITIAL_CHAT);
   const [chatDraft, setChatDraft] = useState("");
+
+  // Per-panel VNC connection state
+  const [vncStates, setVncStates] = useState<Record<string, VncConnectionState>>({});
+  const handleVncStateChange = useCallback((panelId: string, state: VncConnectionState) => {
+    setVncStates((prev) => ({ ...prev, [panelId]: state }));
+  }, []);
 
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const activePanel = useMemo(
@@ -781,6 +815,8 @@ export default function CommandCenter() {
                           onMaximize={setActivePanelId}
                           onDispatch={dispatchTo}
                           onRemove={handleRemovePanel}
+                          vncState={vncStates[p.id]}
+                          onVncStateChange={handleVncStateChange}
                         />
                       ))}
                     </div>
@@ -914,7 +950,10 @@ export default function CommandCenter() {
                   cwd={activePanel.cwd}
                 />
               ) : activePanel?.cwd?.startsWith("ws://") || activePanel?.cwd?.startsWith("wss://") ? (
-                <VncStream url={activePanel.cwd} />
+                <VncStream
+                  url={activePanel.cwd}
+                  onStateChange={(state) => handleVncStateChange(activePanel.id, state)}
+                />
               ) : (
                 <>
                   <div className="absolute inset-0 opacity-10"
