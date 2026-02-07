@@ -436,7 +436,7 @@ pub fn inject_command(
     log::info!(
         "Injecting command into session {}: {}",
         session_id,
-        command.chars().take(80).collect::<String>()
+        command
     );
 
     let sessions = state
@@ -492,7 +492,7 @@ pub async fn inject_commands(
             "Injecting command {}/{}: {}",
             i + 1,
             commands.len(),
-            command.chars().take(80).collect::<String>()
+            command
         );
 
         {
