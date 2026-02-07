@@ -2,6 +2,7 @@
 
 mod logging;
 mod pty;
+mod streaming;
 
 use log::LevelFilter;
 use serde::Serialize;
@@ -229,6 +230,7 @@ pub fn run() {
                 .build(),
         )
         .manage(pty::PtyState::default())
+        .manage(streaming::StreamingState::default())
         .invoke_handler(tauri::generate_handler![
             get_system_stats,
             logging::get_logs,
@@ -240,7 +242,11 @@ pub fn run() {
             pty::kill_terminal,
             pty::list_terminals,
             pty::inject_command,
-            pty::inject_commands
+            pty::inject_commands,
+            streaming::list_displays,
+            streaming::start_local_stream,
+            streaming::stop_local_stream,
+            streaming::get_stream_status,
         ])
         .build(tauri::generate_context!())
         .expect("Failed to build Tauri application");
@@ -250,8 +256,9 @@ pub fn run() {
     // explicitly kill all PTY sessions here to prevent leaked processes.
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
-            let state = app_handle.state::<pty::PtyState>();
-            pty::kill_all_sessions(state.inner());
+            let pty_state = app_handle.state::<pty::PtyState>();
+            pty::kill_all_sessions(pty_state.inner());
+            // Stream cleanup happens via Drop on the shutdown_tx channel
         }
     });
 }

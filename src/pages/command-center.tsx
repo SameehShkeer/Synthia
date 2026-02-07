@@ -4,7 +4,7 @@ import { SystemStats } from "@/types/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { Link } from "wouter";
 import { TerminalNode } from "@/components/terminal-node";
-import { VncStream, type VncConnectionState } from "@/components/vnc-stream";
+import { ScreenStream, type StreamConnectionState } from "@/components/screen-stream";
 import { disposeTerminalInstance } from "@/components/embedded-terminal";
 import {
   ChevronDown,
@@ -100,14 +100,14 @@ const MOCK_PANELS: WorkspacePanel[] = [
     kind: "stream",
     title: "IDE_STREAM_FRONTEND",
     status: "running",
-    cwd: "ws://localhost:6080",
+    cwd: "ws://localhost:9100",
   },
   {
     id: "stream-ide-2",
     kind: "stream",
     title: "IDE_STREAM_BACKEND",
     status: "attention",
-    cwd: "ws://localhost:6081",
+    cwd: "ws://localhost:9101",
   },
 ];
 
@@ -172,29 +172,29 @@ function PanelCard({
   onMaximize,
   onDispatch,
   onRemove,
-  vncState,
-  onVncStateChange,
+  streamState,
+  onStreamStateChange,
 }: {
   panel: WorkspacePanel;
   isFocused: boolean;
   onMaximize: (id: string) => void;
   onDispatch: (id: string) => void;
   onRemove: (id: string) => void;
-  vncState?: VncConnectionState;
-  onVncStateChange?: (id: string, state: VncConnectionState) => void;
+  streamState?: StreamConnectionState;
+  onStreamStateChange?: (id: string, state: StreamConnectionState) => void;
 }) {
   const icon = panel.kind === "terminal" ? TerminalSquare : PanelsTopLeft;
   const Icon = icon;
 
-  const isVncStream =
+  const isWebSocketStream =
     panel.kind === "stream" &&
     (panel.cwd?.startsWith("ws://") || panel.cwd?.startsWith("wss://"));
 
-  // Derive effective panel status from VNC connection state for stream panels
-  const effectiveStatus: WorkspacePanel["status"] = isVncStream
-    ? vncState === "connected"
+  // Derive effective panel status from stream connection state for stream panels
+  const effectiveStatus: WorkspacePanel["status"] = isWebSocketStream
+    ? streamState === "connected"
       ? "running"
-      : vncState === "disconnected" || vncState === "error"
+      : streamState === "disconnected" || streamState === "error"
         ? "attention"
         : "idle"
     : panel.status;
@@ -252,11 +252,11 @@ function PanelCard({
                 cwd={panel.cwd}
               />
             )
-          ) : isVncStream ? (
+          ) : isWebSocketStream ? (
             <div className="absolute inset-0">
-              <VncStream
+              <ScreenStream
                 url={panel.cwd!}
-                onStateChange={(state) => onVncStateChange?.(panel.id, state)}
+                onStateChange={(state) => onStreamStateChange?.(panel.id, state)}
               />
             </div>
           ) : (
@@ -282,14 +282,14 @@ function PanelCard({
             <div className="flex items-center gap-2 min-w-0">
               <div
                 className={`font-mono text-[9px] uppercase tracking-widest pl-1 ${
-                  isVncStream && vncState !== "connected"
+                  isWebSocketStream && streamState !== "connected"
                     ? "text-muted-foreground"
                     : "text-primary/80"
                 }`}
                 data-testid={`badge-kind-${panel.id}`}
               >
-                SYS::{isVncStream
-                  ? vncState === "connected"
+                SYS::{isWebSocketStream
+                  ? streamState === "connected"
                     ? "STREAM"
                     : "OFFLINE"
                   : panel.kind.toUpperCase()}
@@ -405,10 +405,10 @@ export default function CommandCenter() {
   const [chat, setChat] = useState<ChatMessage[]>(INITIAL_CHAT);
   const [chatDraft, setChatDraft] = useState("");
 
-  // Per-panel VNC connection state
-  const [vncStates, setVncStates] = useState<Record<string, VncConnectionState>>({});
-  const handleVncStateChange = useCallback((panelId: string, state: VncConnectionState) => {
-    setVncStates((prev) => ({ ...prev, [panelId]: state }));
+  // Per-panel stream connection state
+  const [streamStates, setStreamStates] = useState<Record<string, StreamConnectionState>>({});
+  const handleStreamStateChange = useCallback((panelId: string, state: StreamConnectionState) => {
+    setStreamStates((prev) => ({ ...prev, [panelId]: state }));
   }, []);
 
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
@@ -815,8 +815,8 @@ export default function CommandCenter() {
                           onMaximize={setActivePanelId}
                           onDispatch={dispatchTo}
                           onRemove={handleRemovePanel}
-                          vncState={vncStates[p.id]}
-                          onVncStateChange={handleVncStateChange}
+                          streamState={streamStates[p.id]}
+                          onStreamStateChange={handleStreamStateChange}
                         />
                       ))}
                     </div>
@@ -950,9 +950,9 @@ export default function CommandCenter() {
                   cwd={activePanel.cwd}
                 />
               ) : activePanel?.cwd?.startsWith("ws://") || activePanel?.cwd?.startsWith("wss://") ? (
-                <VncStream
+                <ScreenStream
                   url={activePanel.cwd}
-                  onStateChange={(state) => handleVncStateChange(activePanel.id, state)}
+                  onStateChange={(state) => handleStreamStateChange(activePanel.id, state)}
                 />
               ) : (
                 <>

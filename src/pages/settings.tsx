@@ -47,20 +47,20 @@ const seedStreams: StreamSource[] = [
   {
     id: "stream-1",
     name: "IDE_STREAM_FRONTEND",
-    protocol: "VNC",
+    protocol: "MJPEG",
     ip: "localhost",
-    port: "6080",
+    port: "9100",
     path: "",
-    enabled: false, // Disabled by default until configured
+    enabled: false,
   },
   {
     id: "stream-2",
     name: "IDE_STREAM_BACKEND",
-    protocol: "VNC",
+    protocol: "MJPEG",
     ip: "localhost",
-    port: "6081",
+    port: "9101",
     path: "",
-    enabled: false, // Disabled by default until configured
+    enabled: false,
   },
 ];
 
@@ -231,7 +231,7 @@ export default function Settings() {
                           {s.name}
                         </div>
                         <div className="mt-1 font-mono text-xs text-muted-foreground" data-testid={`text-stream-url-${s.id}`}>
-                          {s.protocol === "VNC"
+                          {s.protocol === "MJPEG"
                             ? `ws://${s.ip}:${s.port}`
                             : `${s.protocol.toLowerCase()}://${s.ip}:${s.port}${s.path}`}
                         </div>
@@ -376,7 +376,7 @@ export default function Settings() {
                       {
                         id: `stream-${Date.now()}`,
                         name: `STREAM_${prev.length + 1}`,
-                        protocol: "VNC",
+                        protocol: "MJPEG",
                         ip: "",
                         port: "",
                         path: "",
