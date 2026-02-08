@@ -41,6 +41,7 @@ pub struct StreamStatus {
     pub fps: u32,
     pub quality: i32,
     pub clients: usize,
+    pub display_id: Option<u32>,
 }
 
 /// Display info for the frontend display picker
@@ -59,6 +60,7 @@ struct StreamSession {
     port: u16,
     fps: u32,
     quality: i32,
+    display_id: Option<u32>,
     client_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -148,13 +150,17 @@ pub async fn start_local_stream(
     // Find the target display
     let target = if let Some(id) = display_id {
         let targets = scap::get_all_targets();
-        targets.into_iter().find(|t| {
+        let found = targets.into_iter().find(|t| {
             if let scap::Target::Display(d) = t {
                 d.id == id
             } else {
                 false
             }
-        })
+        });
+        if found.is_none() {
+            log::warn!("Display id={} not found in available targets", id);
+        }
+        found
     } else {
         Some(scap::Target::Display(scap::get_main_display()))
     };
@@ -192,7 +198,7 @@ pub async fn start_local_stream(
             show_highlight: false,
             target,
             output_type: FrameType::BGRAFrame,
-            output_resolution: Resolution::_1080p,
+            output_resolution: Resolution::Captured,
             ..Default::default()
         };
 
@@ -233,8 +239,27 @@ pub async fn start_local_stream(
 
             match capturer.get_next_frame() {
                 Ok(Frame::Video(VideoFrame::BGRA(frame))) => {
+                    // Guard: skip empty frames (scap returns 0x0 on transient
+                    // capture failures, common with external HDMI/USB displays)
+                    if frame.width == 0 || frame.height == 0 {
+                        log::debug!("Skipping empty frame ({}x{})", frame.width, frame.height);
+                        continue;
+                    }
+
+                    // Guard: verify pixel buffer length matches dimensions.
+                    // ScreenCaptureKit can return mismatched buffers on non-Retina
+                    // external displays due to scale-factor calculation issues.
+                    let expected_len = frame.width as usize * frame.height as usize * 4;
+                    if frame.data.len() < expected_len {
+                        log::warn!(
+                            "Frame data mismatch: {}x{} expects {} bytes, got {}. Skipping.",
+                            frame.width, frame.height, expected_len, frame.data.len()
+                        );
+                        continue;
+                    }
+
                     let image = turbojpeg::Image {
-                        pixels: frame.data.as_slice(),
+                        pixels: &frame.data[..expected_len],
                         width: frame.width as usize,
                         pitch: frame.width as usize * 4,
                         height: frame.height as usize,
@@ -305,6 +330,7 @@ pub async fn start_local_stream(
         fps,
         quality,
         clients: 0,
+        display_id,
     };
 
     *session = Some(StreamSession {
@@ -314,6 +340,7 @@ pub async fn start_local_stream(
         port: actual_port,
         fps,
         quality,
+        display_id,
         client_count,
     });
 
@@ -362,6 +389,7 @@ pub async fn get_stream_status(
             fps: s.fps,
             quality: s.quality,
             clients: s.client_count.load(std::sync::atomic::Ordering::Relaxed),
+            display_id: s.display_id,
         }),
         None => Ok(StreamStatus {
             active: false,
@@ -369,6 +397,7 @@ pub async fn get_stream_status(
             fps: 0,
             quality: 0,
             clients: 0,
+            display_id: None,
         }),
     }
 }

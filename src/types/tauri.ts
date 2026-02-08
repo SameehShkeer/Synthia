@@ -50,6 +50,7 @@ export interface StreamStatus {
   fps: number;
   quality: number;
   clients: number;
+  display_id: number | null;
 }
 
 /**

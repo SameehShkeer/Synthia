@@ -128,6 +128,7 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
     fps: 30,
     quality: 80,
     clients: 0,
+    display_id: null,
   });
 
   useEffect(() => {
@@ -145,17 +146,30 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
   });
 
   useEffect(() => {
-    invoke<DisplayInfo[]>("list_displays")
-      .then((d) => {
-        setDisplays(d);
-        const primary = d.find((display) => display.is_primary);
-        if (primary) setSelectedDisplayId(primary.id.toString());
-        else if (d.length > 0) setSelectedDisplayId(d[0].id.toString());
-      })
-      .catch((err) => {
+    // Fetch displays and status together, then pick the right selectedDisplayId
+    const init = async () => {
+      try {
+        const [displays, currentStatus] = await Promise.all([
+          invoke<DisplayInfo[]>("list_displays"),
+          invoke<StreamStatus>("get_stream_status").catch(() => null),
+        ]);
+        setDisplays(displays);
+        if (currentStatus) setStatus(currentStatus);
+
+        // If a stream is active, sync to its display; otherwise default to primary
+        if (currentStatus?.active && currentStatus.display_id != null) {
+          setSelectedDisplayId(currentStatus.display_id.toString());
+        } else {
+          const primary = displays.find((d) => d.is_primary);
+          if (primary) setSelectedDisplayId(primary.id.toString());
+          else if (displays.length > 0) setSelectedDisplayId(displays[0].id.toString());
+        }
+      } catch (err) {
         console.error("Failed to load displays", err);
         setError("Could not detect displays. Screen capture requires a physical or virtual display.");
-      });
+      }
+    };
+    init();
 
     const interval = setInterval(() => {
       invoke<StreamStatus>("get_stream_status")
@@ -174,7 +188,7 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
         port: config.port,
         fps: config.fps,
         quality: config.quality,
-        display_id: parseInt(selectedDisplayId),
+        displayId: parseInt(selectedDisplayId),
       });
       setStatus(newStatus);
     } catch (err) {
@@ -192,6 +206,29 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
       setStatus((prev) => ({ ...prev, active: false }));
     } catch (err) {
       console.error("Stop failed", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDisplaySwitch = async (newDisplayId: string) => {
+    setSelectedDisplayId(newDisplayId);
+    if (!status.active) return;
+    // Auto-restart capture on the new display
+    setIsLoading(true);
+    setError(null);
+    try {
+      await invoke("stop_local_stream");
+      const newStatus = await invoke<StreamStatus>("start_local_stream", {
+        port: config.port,
+        fps: config.fps,
+        quality: config.quality,
+        displayId: parseInt(newDisplayId),
+      });
+      setStatus(newStatus);
+    } catch (err) {
+      console.error("Display switch failed", err);
+      setError("Failed to switch display. Try stopping and restarting.");
     } finally {
       setIsLoading(false);
     }
@@ -258,8 +295,8 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
             <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Source Display</div>
             <Select
               value={selectedDisplayId}
-              onValueChange={setSelectedDisplayId}
-              disabled={status.active}
+              onValueChange={handleDisplaySwitch}
+              disabled={isLoading}
             >
               <SelectTrigger className="rounded-none border-border bg-black font-mono text-xs focus:ring-0 focus:border-primary">
                 <SelectValue placeholder="Select display..." />
