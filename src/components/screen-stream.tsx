@@ -35,9 +35,8 @@ const MAX_BACKOFF_MS = 30_000;
 const INITIAL_BACKOFF_MS = 1_000;
 
 /**
- * MJPEG WebSocket stream viewer with connection lifecycle management.
- * Receives binary JPEG frames over WebSocket and renders them on a canvas.
- * Uses createImageBitmap for optimal rendering performance.
+ * Raw RGBA WebSocket stream viewer with connection lifecycle management.
+ * Receives raw RGBA pixel frames over WebSocket and renders via putImageData.
  * Shows visual overlays for connecting/disconnected/error states
  * and auto-reconnects with exponential backoff.
  */
@@ -59,6 +58,10 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
     const [fps, setFps] = useState(0);
     const frameCountRef = useRef(0);
     const fpsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // Frame-dropping via rAF render loop: onmessage only stores latest frame,
+    // requestAnimationFrame renders raw RGBA pixels at display refresh rate.
+    const pendingFrameRef = useRef<ArrayBuffer | null>(null);
+    const rafIdRef = useRef(0);
 
     // Stable refs for connect/scheduleReconnect to break circular dependency
     const connectRef = useRef<() => void>(() => {});
@@ -125,6 +128,11 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
         wsRef.current.close();
         wsRef.current = null;
       }
+      pendingFrameRef.current = null;
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = 0;
+      }
 
       updateState("connecting");
 
@@ -148,40 +156,48 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
           updateState("error");
         };
 
+        // onmessage ONLY stores the latest frame — no processing here.
         ws.onmessage = (event) => {
           if (!(event.data instanceof ArrayBuffer)) return;
-
-          const blob = new Blob([event.data], { type: "image/jpeg" });
-
-          // createImageBitmap is faster than Blob→ObjectURL→Image pipeline:
-          // decodes off main thread, avoids URL lifecycle management
-          createImageBitmap(blob).then((bitmap) => {
-            const canvas = canvasRef.current;
-            if (!canvas) {
-              bitmap.close();
-              return;
-            }
-
-            // Resize canvas to match the frame if needed
-            if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-              canvas.width = bitmap.width;
-              canvas.height = bitmap.height;
-              // Invalidate cached context on resize (canvas resets context)
-              ctxRef.current = null;
-            }
-
-            // Cache canvas context to avoid per-frame getContext() overhead
-            if (!ctxRef.current) {
-              ctxRef.current = canvas.getContext("2d");
-            }
-
-            ctxRef.current?.drawImage(bitmap, 0, 0);
-            bitmap.close();
-            frameCountRef.current++;
-          }).catch(() => {
-            // Silently ignore decode failures (corrupted frame)
-          });
+          pendingFrameRef.current = event.data;
         };
+
+        // rAF render loop renders raw RGBA pixels directly via putImageData.
+        // No image decoding needed — bypasses WebKit's slow JPEG pipeline.
+        // putImageData is synchronous (~2ms), so no async queue buildup.
+        function renderLoop() {
+          rafIdRef.current = requestAnimationFrame(renderLoop);
+
+          const data = pendingFrameRef.current;
+          if (!data || data.byteLength < 4) return;
+          pendingFrameRef.current = null;
+
+          // Parse 4-byte header: u16 width + u16 height (little-endian)
+          const header = new DataView(data);
+          const w = header.getUint16(0, true);
+          const h = header.getUint16(2, true);
+          const expectedBytes = w * h * 4;
+          if (data.byteLength < 4 + expectedBytes) return;
+
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+
+          if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w;
+            canvas.height = h;
+            ctxRef.current = null;
+          }
+
+          if (!ctxRef.current) {
+            ctxRef.current = canvas.getContext("2d");
+          }
+
+          const pixels = new Uint8ClampedArray(data, 4, expectedBytes);
+          const imageData = new ImageData(pixels, w, h);
+          ctxRef.current?.putImageData(imageData, 0, 0);
+          frameCountRef.current++;
+        }
+        rafIdRef.current = requestAnimationFrame(renderLoop);
       } catch {
         updateState("error");
         scheduleReconnect();
@@ -199,6 +215,10 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
 
       return () => {
         clearTimers();
+        if (rafIdRef.current) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = 0;
+        }
         if (wsRef.current) {
           wsRef.current.onopen = null;
           wsRef.current.onclose = null;
