@@ -146,27 +146,30 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
   });
 
   useEffect(() => {
-    invoke<DisplayInfo[]>("list_displays")
-      .then((d) => {
-        setDisplays(d);
-        const primary = d.find((display) => display.is_primary);
-        if (primary) setSelectedDisplayId(primary.id.toString());
-        else if (d.length > 0) setSelectedDisplayId(d[0].id.toString());
-      })
-      .catch((err) => {
+    // Fetch displays and status together, then pick the right selectedDisplayId
+    const init = async () => {
+      try {
+        const [displays, currentStatus] = await Promise.all([
+          invoke<DisplayInfo[]>("list_displays"),
+          invoke<StreamStatus>("get_stream_status").catch(() => null),
+        ]);
+        setDisplays(displays);
+        if (currentStatus) setStatus(currentStatus);
+
+        // If a stream is active, sync to its display; otherwise default to primary
+        if (currentStatus?.active && currentStatus.display_id != null) {
+          setSelectedDisplayId(currentStatus.display_id.toString());
+        } else {
+          const primary = displays.find((d) => d.is_primary);
+          if (primary) setSelectedDisplayId(primary.id.toString());
+          else if (displays.length > 0) setSelectedDisplayId(displays[0].id.toString());
+        }
+      } catch (err) {
         console.error("Failed to load displays", err);
         setError("Could not detect displays. Screen capture requires a physical or virtual display.");
-      });
-
-    // Fetch status immediately so UI reflects active stream without delay
-    invoke<StreamStatus>("get_stream_status")
-      .then((s) => {
-        setStatus(s);
-        if (s.active && s.display_id != null) {
-          setSelectedDisplayId(s.display_id.toString());
-        }
-      })
-      .catch(() => {});
+      }
+    };
+    init();
 
     const interval = setInterval(() => {
       invoke<StreamStatus>("get_stream_status")
