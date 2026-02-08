@@ -157,6 +157,11 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
         setError("Could not detect displays. Screen capture requires a physical or virtual display.");
       });
 
+    // Fetch status immediately so UI reflects active stream without delay
+    invoke<StreamStatus>("get_stream_status")
+      .then((s) => setStatus(s))
+      .catch(() => {});
+
     const interval = setInterval(() => {
       invoke<StreamStatus>("get_stream_status")
         .then((s) => setStatus(s))
@@ -174,7 +179,7 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
         port: config.port,
         fps: config.fps,
         quality: config.quality,
-        display_id: parseInt(selectedDisplayId),
+        displayId: parseInt(selectedDisplayId),
       });
       setStatus(newStatus);
     } catch (err) {
@@ -192,6 +197,29 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
       setStatus((prev) => ({ ...prev, active: false }));
     } catch (err) {
       console.error("Stop failed", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDisplaySwitch = async (newDisplayId: string) => {
+    setSelectedDisplayId(newDisplayId);
+    if (!status.active) return;
+    // Auto-restart capture on the new display
+    setIsLoading(true);
+    setError(null);
+    try {
+      await invoke("stop_local_stream");
+      const newStatus = await invoke<StreamStatus>("start_local_stream", {
+        port: config.port,
+        fps: config.fps,
+        quality: config.quality,
+        displayId: parseInt(newDisplayId),
+      });
+      setStatus(newStatus);
+    } catch (err) {
+      console.error("Display switch failed", err);
+      setError("Failed to switch display. Try stopping and restarting.");
     } finally {
       setIsLoading(false);
     }
@@ -258,8 +286,8 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
             <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">Source Display</div>
             <Select
               value={selectedDisplayId}
-              onValueChange={setSelectedDisplayId}
-              disabled={status.active}
+              onValueChange={handleDisplaySwitch}
+              disabled={isLoading}
             >
               <SelectTrigger className="rounded-none border-border bg-black font-mono text-xs focus:ring-0 focus:border-primary">
                 <SelectValue placeholder="Select display..." />

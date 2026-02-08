@@ -148,13 +148,17 @@ pub async fn start_local_stream(
     // Find the target display
     let target = if let Some(id) = display_id {
         let targets = scap::get_all_targets();
-        targets.into_iter().find(|t| {
+        let found = targets.into_iter().find(|t| {
             if let scap::Target::Display(d) = t {
                 d.id == id
             } else {
                 false
             }
-        })
+        });
+        if found.is_none() {
+            log::warn!("Display id={} not found in available targets", id);
+        }
+        found
     } else {
         Some(scap::Target::Display(scap::get_main_display()))
     };
@@ -192,7 +196,7 @@ pub async fn start_local_stream(
             show_highlight: false,
             target,
             output_type: FrameType::BGRAFrame,
-            output_resolution: Resolution::_1080p,
+            output_resolution: Resolution::Captured,
             ..Default::default()
         };
 
