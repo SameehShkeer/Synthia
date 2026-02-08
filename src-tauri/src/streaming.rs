@@ -233,8 +233,27 @@ pub async fn start_local_stream(
 
             match capturer.get_next_frame() {
                 Ok(Frame::Video(VideoFrame::BGRA(frame))) => {
+                    // Guard: skip empty frames (scap returns 0x0 on transient
+                    // capture failures, common with external HDMI/USB displays)
+                    if frame.width == 0 || frame.height == 0 {
+                        log::debug!("Skipping empty frame ({}x{})", frame.width, frame.height);
+                        continue;
+                    }
+
+                    // Guard: verify pixel buffer length matches dimensions.
+                    // ScreenCaptureKit can return mismatched buffers on non-Retina
+                    // external displays due to scale-factor calculation issues.
+                    let expected_len = frame.width as usize * frame.height as usize * 4;
+                    if frame.data.len() < expected_len {
+                        log::warn!(
+                            "Frame data mismatch: {}x{} expects {} bytes, got {}. Skipping.",
+                            frame.width, frame.height, expected_len, frame.data.len()
+                        );
+                        continue;
+                    }
+
                     let image = turbojpeg::Image {
-                        pixels: frame.data.as_slice(),
+                        pixels: &frame.data[..expected_len],
                         width: frame.width as usize,
                         pitch: frame.width as usize * 4,
                         height: frame.height as usize,
