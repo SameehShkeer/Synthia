@@ -35,8 +35,9 @@ const MAX_BACKOFF_MS = 30_000;
 const INITIAL_BACKOFF_MS = 1_000;
 
 /**
- * Raw RGBA WebSocket stream viewer with connection lifecycle management.
- * Receives raw RGBA pixel frames over WebSocket and renders via putImageData.
+ * Raw BGRA WebSocket stream viewer with connection lifecycle management.
+ * Receives raw BGRA pixel frames over WebSocket and renders via WebGL.
+ * A fragment shader swaps R/B channels on the GPU (zero CPU cost).
  * Shows visual overlays for connecting/disconnected/error states
  * and auto-reconnects with exponential backoff.
  */
@@ -51,7 +52,7 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
       null,
     );
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+    const glRef = useRef<WebGL2RenderingContext | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
     // Track FPS
@@ -162,9 +163,12 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
           pendingFrameRef.current = event.data;
         };
 
-        // rAF render loop renders raw RGBA pixels directly via putImageData.
-        // No image decoding needed — bypasses WebKit's slow JPEG pipeline.
-        // putImageData is synchronous (~2ms), so no async queue buildup.
+        // WebGL render loop: uploads raw BGRA pixels as a GPU texture and
+        // renders with a fragment shader that swaps R/B channels.
+        // texSubImage2D → GPU is far faster than putImageData → CPU → GPU.
+        let texW = 0;
+        let texH = 0;
+
         function renderLoop() {
           rafIdRef.current = requestAnimationFrame(renderLoop);
 
@@ -182,19 +186,107 @@ const ScreenStream = forwardRef<ScreenStreamHandle, ScreenStreamProps>(
           const canvas = canvasRef.current;
           if (!canvas) return;
 
+          // Lazy-init WebGL on first frame
+          let gl = glRef.current;
+          if (!gl) {
+            gl = canvas.getContext("webgl2", {
+              antialias: false,
+              alpha: false,
+            });
+            if (!gl) return;
+            glRef.current = gl;
+
+            // Vertex shader: full-screen quad
+            const vs = gl.createShader(gl.VERTEX_SHADER)!;
+            gl.shaderSource(
+              vs,
+              `#version 300 es
+              in vec2 a_pos;
+              out vec2 v_uv;
+              void main() {
+                v_uv = a_pos * 0.5 + 0.5;
+                v_uv.y = 1.0 - v_uv.y;
+                gl_Position = vec4(a_pos, 0.0, 1.0);
+              }`,
+            );
+            gl.compileShader(vs);
+
+            // Fragment shader: swap R and B (BGRA → RGBA on GPU)
+            const fs = gl.createShader(gl.FRAGMENT_SHADER)!;
+            gl.shaderSource(
+              fs,
+              `#version 300 es
+              precision mediump float;
+              in vec2 v_uv;
+              uniform sampler2D u_tex;
+              out vec4 fragColor;
+              void main() {
+                vec4 c = texture(u_tex, v_uv);
+                fragColor = vec4(c.b, c.g, c.r, c.a);
+              }`,
+            );
+            gl.compileShader(fs);
+
+            const prog = gl.createProgram()!;
+            gl.attachShader(prog, vs);
+            gl.attachShader(prog, fs);
+            gl.linkProgram(prog);
+            gl.useProgram(prog);
+
+            // Full-screen quad
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(
+              gl.ARRAY_BUFFER,
+              new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+              gl.STATIC_DRAW,
+            );
+            const loc = gl.getAttribLocation(prog, "a_pos");
+            gl.enableVertexAttribArray(loc);
+            gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+            // Texture
+            const tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(
+              gl.TEXTURE_2D,
+              gl.TEXTURE_WRAP_S,
+              gl.CLAMP_TO_EDGE,
+            );
+            gl.texParameteri(
+              gl.TEXTURE_2D,
+              gl.TEXTURE_WRAP_T,
+              gl.CLAMP_TO_EDGE,
+            );
+          }
+
+          // Resize canvas and reallocate texture if needed
           if (canvas.width !== w || canvas.height !== h) {
             canvas.width = w;
             canvas.height = h;
-            ctxRef.current = null;
+            gl.viewport(0, 0, w, h);
+            texW = 0;
           }
 
-          if (!ctxRef.current) {
-            ctxRef.current = canvas.getContext("2d");
+          // Upload BGRA pixels to GPU texture
+          const pixels = new Uint8Array(data, 4, expectedBytes);
+          if (texW !== w || texH !== h) {
+            gl.texImage2D(
+              gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0,
+              gl.RGBA, gl.UNSIGNED_BYTE, pixels,
+            );
+            texW = w;
+            texH = h;
+          } else {
+            gl.texSubImage2D(
+              gl.TEXTURE_2D, 0, 0, 0, w, h,
+              gl.RGBA, gl.UNSIGNED_BYTE, pixels,
+            );
           }
 
-          const pixels = new Uint8ClampedArray(data, 4, expectedBytes);
-          const imageData = new ImageData(pixels, w, h);
-          ctxRef.current?.putImageData(imageData, 0, 0);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           frameCountRef.current++;
         }
         rafIdRef.current = requestAnimationFrame(renderLoop);

@@ -22,9 +22,6 @@ const STREAM_PORT_MAX: u16 = 9199;
 /// Maximum FPS to prevent resource exhaustion
 const MAX_FPS: u32 = 30;
 
-/// Maximum frame width for raw RGBA streaming. Frames wider than this are
-/// nearest-neighbor downscaled to reduce bandwidth and frontend render time.
-const STREAM_MAX_WIDTH: u32 = 960;
 
 /// Allowed WebSocket Origin values for the Tauri webview
 const ALLOWED_ORIGINS: &[&str] = &[
@@ -215,9 +212,8 @@ pub async fn start_local_stream(
             }
         };
 
-        // Reusable buffer for raw RGBA pixels with 4-byte dimension header.
-        // Resized once on first frame (or resolution change), reused thereafter.
-        let mut rgba_buf: Vec<u8> = Vec::new();
+        // Reusable buffer for raw BGRA pixels with 4-byte dimension header.
+        let mut frame_buf: Vec<u8> = Vec::new();
 
         capturer.start_capture();
         log::info!("Screen capture started ({}fps, raw RGBA)", capture_fps);
@@ -249,52 +245,21 @@ pub async fn start_local_stream(
                         continue;
                     }
 
-                    // Downscale to fit within STREAM_MAX_WIDTH and convert
-                    // BGRA→RGBA for direct putImageData() on the frontend.
-                    // Raw pixels eliminate WebKit's slow JPEG decode pipeline.
+                    // Send raw BGRA pixels with dimension header — no byte swap.
+                    // The frontend applies a CSS SVG filter to swap R/B channels
+                    // on the GPU, which is essentially free.
                     let src_w = frame.width as usize;
                     let src_h = frame.height as usize;
-                    let scale = if (frame.width as u32) > STREAM_MAX_WIDTH {
-                        (frame.width as u32).div_ceil(STREAM_MAX_WIDTH) as usize
-                    } else {
-                        1
-                    };
-                    let dst_w = src_w / scale;
-                    let dst_h = src_h / scale;
 
-                    // 4-byte header (u16 width + u16 height LE) + RGBA pixels
-                    let total = 4 + dst_w * dst_h * 4;
-                    rgba_buf.resize(total, 0);
-                    rgba_buf[0..2].copy_from_slice(&(dst_w as u16).to_le_bytes());
-                    rgba_buf[2..4].copy_from_slice(&(dst_h as u16).to_le_bytes());
+                    // 4-byte header (u16 width + u16 height LE) + BGRA pixels
+                    let total = 4 + expected_len;
+                    frame_buf.clear();
+                    frame_buf.reserve(total);
+                    frame_buf.extend_from_slice(&(src_w as u16).to_le_bytes());
+                    frame_buf.extend_from_slice(&(src_h as u16).to_le_bytes());
+                    frame_buf.extend_from_slice(&frame.data[..expected_len]);
 
-                    let out = &mut rgba_buf[4..];
-                    if scale == 1 {
-                        // BGRA→RGBA swap only (no downscale)
-                        for i in 0..(src_w * src_h) {
-                            let si = i * 4;
-                            let di = i * 4;
-                            out[di]     = frame.data[si + 2]; // R
-                            out[di + 1] = frame.data[si + 1]; // G
-                            out[di + 2] = frame.data[si];     // B
-                            out[di + 3] = frame.data[si + 3]; // A
-                        }
-                    } else {
-                        // Downscale + BGRA→RGBA swap
-                        for y in 0..dst_h {
-                            let src_row = y * scale * src_w;
-                            for x in 0..dst_w {
-                                let si = (src_row + x * scale) * 4;
-                                let di = (y * dst_w + x) * 4;
-                                out[di]     = frame.data[si + 2]; // R
-                                out[di + 1] = frame.data[si + 1]; // G
-                                out[di + 2] = frame.data[si];     // B
-                                out[di + 3] = frame.data[si + 3]; // A
-                            }
-                        }
-                    }
-
-                    let _ = capture_frame_tx.send(Bytes::copy_from_slice(&rgba_buf[..total]));
+                    let _ = capture_frame_tx.send(Bytes::copy_from_slice(&frame_buf));
                 }
                 Ok(_) => {
                     // Skip non-BGRA frames (audio, etc.)
