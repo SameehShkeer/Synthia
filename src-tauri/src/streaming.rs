@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{watch, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
 use scap::frame::{Frame, FrameType, VideoFrame};
@@ -21,6 +21,7 @@ const STREAM_PORT_MAX: u16 = 9199;
 
 /// Maximum FPS to prevent resource exhaustion
 const MAX_FPS: u32 = 30;
+
 
 /// Allowed WebSocket Origin values for the Tauri webview
 const ALLOWED_ORIGINS: &[&str] = &[
@@ -182,13 +183,14 @@ pub async fn start_local_stream(
 
     log::info!("MJPEG WebSocket server starting on ws://127.0.0.1:{}", actual_port);
 
-    // Broadcast channel for JPEG frames (Bytes for zero-copy cloning)
-    let (frame_tx, _) = broadcast::channel::<Bytes>(16);
+    // Watch channel for JPEG frames — latest-frame semantics for real-time streaming.
+    // Only the most recent frame is retained, eliminating stale-frame buffering.
+    let (frame_tx, _) = watch::channel(Bytes::new());
+    let frame_tx = Arc::new(frame_tx);
 
     // Spawn the capture thread (blocking - scap uses blocking get_next_frame)
     let capture_frame_tx = frame_tx.clone();
     let capture_shutdown_rx = shutdown_rx.clone();
-    let capture_quality = quality;
     let capture_fps = fps;
 
     let capture_handle = std::thread::spawn(move || {
@@ -210,26 +212,11 @@ pub async fn start_local_stream(
             }
         };
 
-        // Create turbojpeg compressor
-        let mut compressor = match turbojpeg::Compressor::new() {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("Failed to create JPEG compressor: {}", e);
-                return;
-            }
-        };
-
-        if let Err(e) = compressor.set_quality(capture_quality) {
-            log::error!("Failed to set JPEG quality: {}", e);
-            return;
-        }
-        if let Err(e) = compressor.set_subsamp(turbojpeg::Subsamp::Sub2x2) {
-            log::error!("Failed to set JPEG subsampling: {}", e);
-            return;
-        }
+        // Reusable buffer for raw BGRA pixels with 4-byte dimension header.
+        let mut frame_buf: Vec<u8> = Vec::new();
 
         capturer.start_capture();
-        log::info!("Screen capture started ({}fps, quality={})", capture_fps, capture_quality);
+        log::info!("Screen capture started ({}fps, raw RGBA)", capture_fps);
 
         loop {
             // Check for shutdown
@@ -258,23 +245,21 @@ pub async fn start_local_stream(
                         continue;
                     }
 
-                    let image = turbojpeg::Image {
-                        pixels: &frame.data[..expected_len],
-                        width: frame.width as usize,
-                        pitch: frame.width as usize * 4,
-                        height: frame.height as usize,
-                        format: turbojpeg::PixelFormat::BGRA,
-                    };
+                    // Send raw BGRA pixels with dimension header — no byte swap.
+                    // The frontend applies a CSS SVG filter to swap R/B channels
+                    // on the GPU, which is essentially free.
+                    let src_w = frame.width as usize;
+                    let src_h = frame.height as usize;
 
-                    match compressor.compress_to_vec(image) {
-                        Ok(jpeg_data) => {
-                            // Bytes::from(Vec) is zero-copy; clone() is O(1) ref-count
-                            let _ = capture_frame_tx.send(Bytes::from(jpeg_data));
-                        }
-                        Err(e) => {
-                            log::warn!("JPEG compression failed: {}", e);
-                        }
-                    }
+                    // 4-byte header (u16 width + u16 height LE) + BGRA pixels
+                    let total = 4 + expected_len;
+                    frame_buf.clear();
+                    frame_buf.reserve(total);
+                    frame_buf.extend_from_slice(&(src_w as u16).to_le_bytes());
+                    frame_buf.extend_from_slice(&(src_h as u16).to_le_bytes());
+                    frame_buf.extend_from_slice(&frame.data[..expected_len]);
+
+                    let _ = capture_frame_tx.send(Bytes::copy_from_slice(&frame_buf));
                 }
                 Ok(_) => {
                     // Skip non-BGRA frames (audio, etc.)
@@ -302,6 +287,8 @@ pub async fn start_local_stream(
                 result = listener.accept() => {
                     match result {
                         Ok((stream, addr)) => {
+                            // Disable Nagle's algorithm for low-latency frame delivery
+                            stream.set_nodelay(true).ok();
                             log::debug!("New WebSocket client: {}", addr);
                             let rx = frame_tx.subscribe();
                             let count = ws_client_count.clone();
@@ -414,9 +401,9 @@ fn is_allowed_origin(origin: &str) -> bool {
 
 async fn handle_ws_client(
     stream: tokio::net::TcpStream,
-    mut frame_rx: broadcast::Receiver<Bytes>,
+    mut frame_rx: watch::Receiver<Bytes>,
     client_count: Arc<std::sync::atomic::AtomicUsize>,
-    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    shutdown_rx: watch::Receiver<bool>,
 ) {
     // Validate Origin header during WebSocket handshake to prevent
     // DNS rebinding and Cross-Site WebSocket Hijacking (CSWSH) attacks.
@@ -456,20 +443,18 @@ async fn handle_ws_client(
 
     loop {
         tokio::select! {
-            // Send frames to the client
-            frame = frame_rx.recv() => {
-                match frame {
-                    Ok(jpeg_data) => {
-                        // Bytes::clone() is O(1) ref-count increment — zero-copy
-                        if let Err(e) = ws_sender.send(Message::Binary(jpeg_data.to_vec().into())).await {
+            // Send latest frame to the client (watch = always latest, no stale buffering)
+            result = frame_rx.changed() => {
+                match result {
+                    Ok(()) => {
+                        let frame_data = frame_rx.borrow_and_update().clone();
+                        if frame_data.is_empty() { continue; }
+                        if let Err(e) = ws_sender.send(Message::Binary(frame_data)).await {
                             log::debug!("WebSocket send error (client disconnected): {}", e);
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        log::debug!("Client lagged, skipped {} frames", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Err(_) => {
                         break;
                     }
                 }
