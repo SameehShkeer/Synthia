@@ -41,6 +41,7 @@ pub struct StreamStatus {
     pub fps: u32,
     pub quality: i32,
     pub clients: usize,
+    pub display_id: Option<u32>,
 }
 
 /// Display info for the frontend display picker
@@ -59,6 +60,7 @@ struct StreamSession {
     port: u16,
     fps: u32,
     quality: i32,
+    display_id: Option<u32>,
     client_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -328,6 +330,7 @@ pub async fn start_local_stream(
         fps,
         quality,
         clients: 0,
+        display_id,
     };
 
     *session = Some(StreamSession {
@@ -337,6 +340,7 @@ pub async fn start_local_stream(
         port: actual_port,
         fps,
         quality,
+        display_id,
         client_count,
     });
 
@@ -385,6 +389,7 @@ pub async fn get_stream_status(
             fps: s.fps,
             quality: s.quality,
             clients: s.client_count.load(std::sync::atomic::Ordering::Relaxed),
+            display_id: s.display_id,
         }),
         None => Ok(StreamStatus {
             active: false,
@@ -392,6 +397,7 @@ pub async fn get_stream_status(
             fps: 0,
             quality: 0,
             clients: 0,
+            display_id: None,
         }),
     }
 }

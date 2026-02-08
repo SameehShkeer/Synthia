@@ -128,6 +128,7 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
     fps: 30,
     quality: 80,
     clients: 0,
+    display_id: null,
   });
 
   useEffect(() => {
@@ -159,7 +160,12 @@ function LocalCaptureCard({ onStatusChange }: { onStatusChange: (active: boolean
 
     // Fetch status immediately so UI reflects active stream without delay
     invoke<StreamStatus>("get_stream_status")
-      .then((s) => setStatus(s))
+      .then((s) => {
+        setStatus(s);
+        if (s.active && s.display_id != null) {
+          setSelectedDisplayId(s.display_id.toString());
+        }
+      })
       .catch(() => {});
 
     const interval = setInterval(() => {
