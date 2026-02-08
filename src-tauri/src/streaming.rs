@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{watch, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
 use scap::frame::{Frame, FrameType, VideoFrame};
@@ -182,8 +182,10 @@ pub async fn start_local_stream(
 
     log::info!("MJPEG WebSocket server starting on ws://127.0.0.1:{}", actual_port);
 
-    // Broadcast channel for JPEG frames (Bytes for zero-copy cloning)
-    let (frame_tx, _) = broadcast::channel::<Bytes>(16);
+    // Watch channel for JPEG frames — latest-frame semantics for real-time streaming.
+    // Only the most recent frame is retained, eliminating stale-frame buffering.
+    let (frame_tx, _) = watch::channel(Bytes::new());
+    let frame_tx = Arc::new(frame_tx);
 
     // Spawn the capture thread (blocking - scap uses blocking get_next_frame)
     let capture_frame_tx = frame_tx.clone();
@@ -228,6 +230,10 @@ pub async fn start_local_stream(
             return;
         }
 
+        // Reusable output buffer — avoids per-frame malloc/free overhead.
+        // TurboJPEG automatically resizes the buffer as needed.
+        let mut output_buf = turbojpeg::OutputBuf::new_owned();
+
         capturer.start_capture();
         log::info!("Screen capture started ({}fps, quality={})", capture_fps, capture_quality);
 
@@ -266,10 +272,9 @@ pub async fn start_local_stream(
                         format: turbojpeg::PixelFormat::BGRA,
                     };
 
-                    match compressor.compress_to_vec(image) {
-                        Ok(jpeg_data) => {
-                            // Bytes::from(Vec) is zero-copy; clone() is O(1) ref-count
-                            let _ = capture_frame_tx.send(Bytes::from(jpeg_data));
+                    match compressor.compress(image, &mut output_buf) {
+                        Ok(()) => {
+                            let _ = capture_frame_tx.send(Bytes::copy_from_slice(&output_buf));
                         }
                         Err(e) => {
                             log::warn!("JPEG compression failed: {}", e);
@@ -302,6 +307,8 @@ pub async fn start_local_stream(
                 result = listener.accept() => {
                     match result {
                         Ok((stream, addr)) => {
+                            // Disable Nagle's algorithm for low-latency frame delivery
+                            stream.set_nodelay(true).ok();
                             log::debug!("New WebSocket client: {}", addr);
                             let rx = frame_tx.subscribe();
                             let count = ws_client_count.clone();
@@ -414,9 +421,9 @@ fn is_allowed_origin(origin: &str) -> bool {
 
 async fn handle_ws_client(
     stream: tokio::net::TcpStream,
-    mut frame_rx: broadcast::Receiver<Bytes>,
+    mut frame_rx: watch::Receiver<Bytes>,
     client_count: Arc<std::sync::atomic::AtomicUsize>,
-    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    shutdown_rx: watch::Receiver<bool>,
 ) {
     // Validate Origin header during WebSocket handshake to prevent
     // DNS rebinding and Cross-Site WebSocket Hijacking (CSWSH) attacks.
@@ -456,20 +463,18 @@ async fn handle_ws_client(
 
     loop {
         tokio::select! {
-            // Send frames to the client
-            frame = frame_rx.recv() => {
-                match frame {
-                    Ok(jpeg_data) => {
-                        // Bytes::clone() is O(1) ref-count increment — zero-copy
-                        if let Err(e) = ws_sender.send(Message::Binary(jpeg_data.to_vec().into())).await {
+            // Send latest frame to the client (watch = always latest, no stale buffering)
+            result = frame_rx.changed() => {
+                match result {
+                    Ok(()) => {
+                        let jpeg_data = frame_rx.borrow_and_update().clone();
+                        if jpeg_data.is_empty() { continue; }
+                        if let Err(e) = ws_sender.send(Message::Binary(jpeg_data)).await {
                             log::debug!("WebSocket send error (client disconnected): {}", e);
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        log::debug!("Client lagged, skipped {} frames", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Err(_) => {
                         break;
                     }
                 }
